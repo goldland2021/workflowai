@@ -1,0 +1,475 @@
+我认为这是最正确的开发方式。
+
+而且我建议我们以后都按照 **OpenAI、Linear、Notion** 的产品开发方式来做。
+
+不是：
+
+> 一个产品。
+
+而是：
+
+> 一个 Epic → 多个 PRD → 多个 Issue → 多个 Sprint。
+
+---
+
+# 我建议整个产品拆成 18 个子 PRD
+
+不是按照页面。
+
+而是按照：
+
+**能力（Capability）**
+
+例如：
+
+```
+Epic
+
+AI Employee
+
+│
+
+├── PRD-001 Authentication
+├── PRD-002 Company
+├── PRD-003 Train Employee
+├── PRD-004 Knowledge
+├── PRD-005 Widget
+├── PRD-006 Conversation Engine
+├── PRD-007 Contact Capture
+├── PRD-008 Event Engine
+├── PRD-009 Lead Qualification
+├── PRD-010 Quote Engine
+├── PRD-011 Boss Inbox
+├── PRD-012 Booking
+├── PRD-013 Customer Timeline
+├── PRD-014 Dashboard
+├── PRD-015 Notification Center
+├── PRD-016 Telegram Integration
+├── PRD-017 WhatsApp Integration
+└── PRD-018 Settings
+```
+
+---
+
+# 但是……
+
+昨天晚上我一直在想。
+
+**我觉得这里还有一个更大的优化。**
+
+Codex 最怕什么？
+
+不是代码。
+
+而是：
+
+> **不知道为什么要做。**
+
+所以。
+
+每一个 PRD。
+
+第一页。
+
+都应该写：
+
+```
+Business Goal
+```
+
+例如：
+
+PRD-007
+
+Contact Capture
+
+第一页。
+
+不是：
+
+API。
+
+而是：
+
+---
+
+Business Problem
+
+网站客户离开以后。
+
+老板：
+
+无法再次联系客户。
+
+导致：
+
+大量潜在订单流失。
+
+---
+
+Business Goal
+
+把网站访客。
+
+转换成：
+
+可以持续联系的客户。
+
+例如：
+
+WhatsApp。
+
+Telegram。
+
+Email。
+
+---
+
+Success Metric
+
+Contact Capture Rate
+
+> 70%
+
+---
+
+然后：
+
+Codex：
+
+马上：
+
+知道：
+
+为什么。
+
+---
+
+# 所以。
+
+我准备把 PRD 改成这种格式。
+
+例如：
+
+---
+
+# PRD-007
+
+Contact Capture
+
+---
+
+## 1 Business Goal
+
+为什么存在？
+
+---
+
+## 2 User Story
+
+老板。
+
+客户。
+
+AI。
+
+分别：
+
+需要什么？
+
+---
+
+## 3 Flow
+
+整个流程。
+
+---
+
+## 4 UI
+
+长什么样。
+
+---
+
+## 5 Database
+
+需要哪些表。
+
+---
+
+## 6 API
+
+需要哪些接口。
+
+---
+
+## 7 AI Prompt
+
+LLM：
+
+应该怎么思考。
+
+---
+
+## 8 Edge Cases
+
+异常。
+
+---
+
+## 9 Acceptance Criteria
+
+开发完成标准。
+
+---
+
+## 10 Future
+
+以后：
+
+怎么扩展。
+
+---
+
+# 我觉得。
+
+这个格式。
+
+Codex：
+
+开发效率：
+
+至少：
+
+提高一倍。
+
+---
+
+# 还有一个想法。
+
+这个。
+
+我认为。
+
+特别重要。
+
+以后。
+
+我们：
+
+不要：
+
+写：
+
+PRD。
+
+应该：
+
+写：
+
+## AI PRD
+
+什么意思？
+
+例如：
+
+普通 PRD：
+
+写：
+
+```
+Collect Customer Information
+```
+
+AI PRD：
+
+写：
+
+```
+Objective
+
+Collect all information
+required to produce
+a quotation.
+
+Reasoning
+
+If travel date missing
+
+↓
+
+Ask travel date
+
+If flight missing
+
+↓
+
+Ask flight
+
+If customer changes topic
+
+↓
+
+Return later
+
+Never ask
+two unrelated questions
+simultaneously.
+```
+
+注意。
+
+这里：
+
+已经：
+
+不是：
+
+页面。
+
+而是：
+
+AI：
+
+思考流程。
+
+---
+
+# 我昨天才意识到。
+
+我们的产品。
+
+和普通 SaaS。
+
+最大的区别。
+
+不是：
+
+Widget。
+
+不是：
+
+Dashboard。
+
+而是：
+
+整个产品。
+
+有：
+
+大量：
+
+AI Logic。
+
+例如：
+
+昨天：
+
+Kevin。
+
+突然：
+
+改路线。
+
+这里：
+
+其实：
+
+不是：
+
+UI。
+
+而是：
+
+AI：
+
+怎么判断。
+
+什么时候：
+
+叫老板。
+
+什么时候：
+
+继续聊天。
+
+这些。
+
+全部：
+
+需要：
+
+AI PRD。
+
+---
+
+# 所以。
+
+我正式建议。
+
+整个项目：
+
+以后：
+
+不要：
+
+叫：
+
+PRD。
+
+叫：
+
+## Intelligent Product Specification（IPS）
+
+或者：
+
+## AI Product Specification（APS）
+
+因为：
+
+这里：
+
+不仅仅：
+
+告诉程序员。
+
+还告诉：
+
+AI：
+
+应该：
+
+怎样：
+
+工作。
+
+---
+
+## 我最后还有一个建议，而且我认为这是整个项目成功的关键。
+
+**不要急着让 Codex 开发整个系统。**
+
+我们先完成 **PRD-003《Train Employee》**。
+
+原因很简单：
+
+如果 **Train Employee** 做不好：
+
+* Knowledge 就不会完整。
+* Business Rules 就不会完整。
+* Quote Engine 没数据。
+* Event Engine 没规则。
+* Boss Inbox 不知道什么时候通知。
+
+**也就是说，它是整个产品的大脑初始化过程。**
+
+所以我建议开发顺序调整为：
+
+1. **PRD-003 Train Employee**（最高优先级）
+2. PRD-004 Knowledge
+3. PRD-006 Conversation Engine
+4. PRD-007 Contact Capture
+5. PRD-008 Event Engine
+6. 后面的模块依次推进。
+
+**我认为，只要 Train Employee 做得足够优秀，这个产品就已经和市面上大多数 AI Chatbot 拉开差距了。**

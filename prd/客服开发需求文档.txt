@@ -1,0 +1,887 @@
+# AI Employee V1.0 - Product Requirements Document (PRD)
+
+Version: 1.0 (MVP)
+
+Author: ChatGPT & Product Owner
+
+Status: Ready for Development
+
+---
+
+# 1. Product Overview
+
+## Product Name
+
+AI Employee
+
+## Product Positioning
+
+AI Employee is an AI front desk for service businesses.
+
+It responds to customers instantly, captures contact information, collects business requirements, detects important business events, summarizes conversations, and only escalates to the business owner when a commercial decision is required.
+
+The product is designed for owner-operated businesses.
+
+Examples:
+
+* Airport Transfer
+* Plumber
+* Electrician
+* Cleaning Company
+* Photographer
+* Lawyer
+* Medical Clinic
+* Moving Company
+
+---
+
+# 2. Product Goal
+
+The product must solve four problems.
+
+1. Never let customers wait.
+
+2. Never lose a potential customer.
+
+3. Reduce repetitive customer service work.
+
+4. Allow the owner to focus only on business decisions.
+
+---
+
+# 3. User Roles
+
+## Customer
+
+Visits website.
+
+Chats with AI.
+
+Receives quotation.
+
+Makes booking.
+
+---
+
+## Business Owner
+
+Configures AI.
+
+Approves important decisions.
+
+Views leads and bookings.
+
+---
+
+## AI Employee
+
+Greets customers.
+
+Collects information.
+
+Captures contact details.
+
+Suggests quotations.
+
+Detects business events.
+
+Creates booking summaries.
+
+Escalates exceptions.
+
+---
+
+# 4. Product Architecture
+
+Customer
+
+↓
+
+Website Widget
+
+↓
+
+AI Conversation Engine
+
+↓
+
+Knowledge Base
+
+↓
+
+Business Rules
+
+↓
+
+Event Detection
+
+↓
+
+Lead Qualification
+
+↓
+
+Quote Suggestion
+
+↓
+
+Boss Inbox
+
+↓
+
+Booking
+
+---
+
+# 5. Functional Modules
+
+---
+
+MODULE 1
+
+Authentication
+
+---
+
+Functions
+
+* Register
+* Login
+* Forgot Password
+* Company Creation
+
+Database
+
+Users
+
+Companies
+
+---
+
+MODULE 2
+
+Train Employee (AI Interview)
+
+---
+
+Purpose
+
+Instead of uploading documents immediately, AI interviews the business owner.
+
+Example Questions
+
+What business do you run?
+
+What services do you provide?
+
+Business hours?
+
+Languages?
+
+Payment methods?
+
+Waiting policy?
+
+Cancellation policy?
+
+Overtime policy?
+
+Pricing method?
+
+When should I ask you before replying?
+
+Website URL?
+
+After interview
+
+Generate Business Rules automatically.
+
+Allow uploading
+
+Website
+
+PDF
+
+Word
+
+Excel
+
+FAQ
+
+Output
+
+Company Knowledge
+
+Business Rules
+
+Pricing Rules
+
+FAQ
+
+---
+
+MODULE 3
+
+Knowledge Center
+
+---
+
+Support
+
+Website Crawl
+
+PDF
+
+DOCX
+
+TXT
+
+Excel
+
+FAQ
+
+Manual Notes
+
+Future
+
+Google Drive
+
+Notion
+
+Dropbox
+
+Requirements
+
+Searchable
+
+Version Control
+
+Auto Re-index
+
+---
+
+MODULE 4
+
+Website Widget
+
+---
+
+Installation
+
+Single JavaScript
+
+<script src="widget.js"></script>
+
+Functions
+
+Floating Widget
+
+Live Chat
+
+Multi-language
+
+Theme Color
+
+Business Hours
+
+Offline Message
+
+Typing Indicator
+
+Conversation History
+
+---
+
+MODULE 5
+
+AI Conversation Engine
+
+---
+
+Functions
+
+Greeting
+
+Answer Questions
+
+Collect Information
+
+Follow Workflow
+
+Ask Follow-up Questions
+
+Conversation Memory
+
+Generate Summary
+
+Generate Booking
+
+Never stop conversation unexpectedly.
+
+---
+
+MODULE 6
+
+Lead Capture Engine
+
+---
+
+Purpose
+
+Capture customer contact information before losing the visitor.
+
+Supported
+
+WhatsApp
+
+Telegram
+
+Email
+
+Rules
+
+Do not ask immediately.
+
+Ask after customer shows purchase intent.
+
+Examples
+
+Travel date available
+
+Budget discussion
+
+Quotation requested
+
+Booking request
+
+Store
+
+Preferred Contact Method
+
+Contact Number
+
+Email
+
+---
+
+MODULE 7
+
+Lead Qualification
+
+---
+
+AI automatically scores customers.
+
+Example
+
+Flight Number ✔
+
+Travel Date ✔
+
+Passengers ✔
+
+Destination ✔
+
+Budget ✔
+
+Lead Score
+
+1~5 Stars
+
+Status
+
+Cold
+
+Warm
+
+Hot
+
+Ready To Book
+
+---
+
+MODULE 8
+
+Business Event Engine
+
+---
+
+Purpose
+
+Detect important business events automatically.
+
+Default Events
+
+Discount Request
+
+Complaint
+
+Cancellation
+
+Flight Delay
+
+Route Change
+
+Vehicle Change
+
+Passenger Change
+
+VIP Customer
+
+Refund Request
+
+Urgent Booking
+
+AI should classify events.
+
+Never make business decisions automatically.
+
+---
+
+MODULE 9
+
+Quote Suggestion Engine
+
+---
+
+Purpose
+
+Generate quotation suggestions.
+
+Inputs
+
+Pricing Rules
+
+Distance
+
+Time
+
+Vehicle
+
+Business Rules
+
+Historical Orders
+
+Customer History
+
+Output
+
+Suggested Price
+
+Reason
+
+Confidence
+
+Owner can
+
+Approve
+
+Edit
+
+Reject
+
+---
+
+MODULE 10
+
+Boss Inbox
+
+---
+
+Purpose
+
+All business decisions arrive here.
+
+Example
+
+Customer
+
+Kevin
+
+Event
+
+Discount Request
+
+Original
+
+60000
+
+Suggested
+
+43000
+
+Reason
+
+Route Changed
+
+Buttons
+
+Approve
+
+Edit
+
+Call Customer
+
+Reject
+
+Requirements
+
+Push Notification
+
+Pending Queue
+
+History
+
+---
+
+MODULE 11
+
+Booking Engine
+
+---
+
+Automatically generate
+
+Booking Summary
+
+Driver Notes
+
+Invoice
+
+Receipt
+
+Internal Order
+
+Order Status
+
+Pending
+
+Confirmed
+
+Completed
+
+Cancelled
+
+---
+
+MODULE 12
+
+Customer Timeline
+
+---
+
+Each customer has one profile.
+
+Timeline
+
+Website Visit
+
+Lead
+
+Quote
+
+Booking
+
+Completed
+
+Repeat Customer
+
+Customer Memory
+
+Conversation History
+
+Booking History
+
+Preferred Language
+
+Preferred Contact Method
+
+Lifetime Value
+
+---
+
+MODULE 13
+
+Dashboard
+
+---
+
+Today's Leads
+
+Today's Bookings
+
+Pending Approval
+
+Revenue
+
+Lead Conversion
+
+AI Performance
+
+Recent Conversations
+
+---
+
+MODULE 14
+
+Integrations
+
+---
+
+MVP
+
+Website Widget
+
+WhatsApp Business Platform
+
+Telegram
+
+Email
+
+Google Calendar
+
+Future
+
+Stripe
+
+Facebook Messenger
+
+Instagram
+
+Slack
+
+Phone AI
+
+---
+
+# 6. Mobile Experience
+
+No complex CRM.
+
+Only Boss Inbox.
+
+Owner should finish any approval within 10 seconds.
+
+Screens
+
+Pending Decisions
+
+Lead Summary
+
+Booking Summary
+
+Customer Timeline
+
+---
+
+# 7. Desktop Experience
+
+Train Employee
+
+Knowledge
+
+Business Rules
+
+Dashboard
+
+Analytics
+
+Settings
+
+Integrations
+
+---
+
+# 8. Database (High Level)
+
+Users
+
+Companies
+
+Customers
+
+Leads
+
+Conversations
+
+Events
+
+BusinessRules
+
+KnowledgeDocuments
+
+Quotes
+
+Bookings
+
+BossInbox
+
+Notifications
+
+---
+
+# 9. AI Rules
+
+AI can
+
+Reply immediately
+
+Collect information
+
+Answer FAQ
+
+Generate summaries
+
+Suggest quotations
+
+Detect business events
+
+Capture contact information
+
+Generate bookings
+
+AI cannot
+
+Approve discounts
+
+Approve refunds
+
+Promise compensation
+
+Change prices
+
+Accept cancellations without owner approval
+
+Modify business rules
+
+---
+
+# 10. Product Principles
+
+1. AI always responds immediately.
+
+2. AI always captures customer contact whenever appropriate.
+
+3. AI always summarizes instead of showing raw conversations.
+
+4. AI detects business events instead of simply chatting.
+
+5. AI asks the owner only when necessary.
+
+6. Owner controls business decisions.
+
+7. Every feature must save the owner's time.
+
+---
+
+# 11. MVP Definition
+
+Included
+
+✓ Website Widget
+
+✓ AI Interview
+
+✓ Knowledge Base
+
+✓ Conversation Engine
+
+✓ Lead Capture
+
+✓ Event Detection
+
+✓ Quote Suggestion
+
+✓ Boss Inbox
+
+✓ Booking Summary
+
+✓ Dashboard
+
+Not Included
+
+✗ Phone AI
+
+✗ Marketplace
+
+✗ Multi-Agent Collaboration
+
+✗ Social Media Management
+
+✗ Advanced Workflow Builder
+
+✗ Native iOS App
+
+✗ Native Android App
+
+---
+
+# 12. Success Metrics
+
+AI First Response Time < 5 seconds
+
+Lead Contact Capture Rate > 70%
+
+Owner Intervention Rate < 20%
+
+Average Owner Approval Time < 30 seconds
+
+Lead-to-Booking Conversion Improvement
+
+Customer Satisfaction Improvement
+
+Reduction in Lost Conversations
+
+---
+
+# 13. Development Roadmap
+
+Sprint 1
+
+Authentication
+
+Company
+
+Dashboard
+
+Sprint 2
+
+Train Employee
+
+Knowledge
+
+Business Rules
+
+Sprint 3
+
+Widget
+
+Conversation
+
+Lead Capture
+
+Sprint 4
+
+Event Engine
+
+Quote Suggestion
+
+Boss Inbox
+
+Sprint 5
+
+Booking
+
+Customer Timeline
+
+Telegram Notifications
+
+Sprint 6
+
+WhatsApp Integration
+
+Testing
+
+Public Beta
+
+END

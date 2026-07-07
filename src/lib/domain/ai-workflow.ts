@@ -1,0 +1,607 @@
+import type {
+  BossInboxItem,
+  BusinessConfiguration,
+  CapturedContact,
+  ConversationMessage,
+  DetectedEvent,
+  EventType,
+  QuoteSuggestion,
+  TripDetails,
+  TripFieldKey,
+} from "./types";
+import type { ExistingBossInboxItem, WorkflowResult } from "./workflow-types";
+import { getMissingQuoteFields } from "./booking-workflow";
+
+// Real AI integration (modular - falls back gracefully if no key)
+import {
+  extractTripDetailsWithAI,
+  detectEventsWithAI,
+  extractContactWithAI,
+  suggestQuoteWithAI,
+} from "../ai/extract";
+import { generateAiReplyWithAI } from "../ai/reply";
+import { hasRealAI } from "../ai";
+
+const eventKeywords: Array<{
+  type: EventType;
+  keywords: string[];
+  severity: DetectedEvent["severity"];
+  ownerAction: string;
+}> = [
+  {
+    type: "Discount Request",
+    keywords: ["discount", "cheaper", "lower price", "best price", "too expensive"],
+    severity: "medium",
+    ownerAction: "Review whether a discount is commercially acceptable.",
+  },
+  {
+    type: "Urgent Booking",
+    keywords: ["urgent", "asap", "right now", "today", "tonight", "in one hour"],
+    severity: "high",
+    ownerAction: "Confirm driver and vehicle availability before replying.",
+  },
+  {
+    type: "Route Change",
+    keywords: ["change route", "different hotel", "change pickup", "change drop", "another stop"],
+    severity: "medium",
+    ownerAction: "Check whether the new route changes the price.",
+  },
+  {
+    type: "Flight Delay",
+    keywords: ["delay", "delayed", "late flight", "flight is late"],
+    severity: "medium",
+    ownerAction: "Review driver schedule and waiting policy.",
+  },
+  {
+    type: "Complaint",
+    keywords: ["complaint", "not happy", "bad service", "driver was late", "angry"],
+    severity: "high",
+    ownerAction: "Handle the complaint personally before the AI promises anything.",
+  },
+  {
+    type: "Cancellation Request",
+    keywords: ["cancel", "cancellation", "refund", "no longer need"],
+    severity: "high",
+    ownerAction: "Review cancellation policy and decide the response.",
+  },
+  {
+    type: "Receipt Request",
+    keywords: ["receipt", "invoice", "发票", "收据"],
+    severity: "low",
+    ownerAction: "Prepare receipt details and confirm the receipt name or amount.",
+  },
+  {
+    type: "Driver Assignment Needed",
+    keywords: ["driver details", "driver information", "driver name", "license plate", "车牌", "司机"],
+    severity: "medium",
+    ownerAction: "Confirm driver and vehicle details before sending them to the customer.",
+  },
+  {
+    type: "Pickup Time Change",
+    keywords: ["change pickup time", "what time should", "pickup time", "leave at", "几点出发", "幾點出發"],
+    severity: "medium",
+    ownerAction: "Review timing, traffic buffer, and flight schedule before confirming.",
+  },
+  {
+    type: "Early Pickup Request",
+    keywords: ["come earlier", "pick up earlier", "ready to leave now", "arrive early"],
+    severity: "medium",
+    ownerAction: "Check with the driver before promising an earlier pickup.",
+  },
+  {
+    type: "Same Driver Request",
+    keywords: ["same driver", "same car", "same chauffeur"],
+    severity: "medium",
+    ownerAction: "Check whether the same driver is available.",
+  },
+  {
+    type: "English-speaking Driver Request",
+    keywords: ["english-speaking driver", "english speaking driver", "english driver"],
+    severity: "medium",
+    ownerAction: "Confirm whether an English-speaking driver is available.",
+  },
+  {
+    type: "Multi-leg Itinerary Request",
+    keywords: ["following", "itinerary", "multi", "mt fuji", "hakone", "kyoto", "takayama", "day tour"],
+    severity: "medium",
+    ownerAction: "Review each route leg and prepare a structured multi-leg quote.",
+  },
+  {
+    type: "Round Trip Discount",
+    keywords: ["round trip", "return pickup", "both transfers", "same price", "special price"],
+    severity: "medium",
+    ownerAction: "Decide whether a round-trip discount is acceptable.",
+  },
+  {
+    type: "Payment Coordination",
+    keywords: ["pay cash", "pay the driver", "payment", "paid", "付款"],
+    severity: "low",
+    ownerAction: "Confirm payment method and which driver should receive payment.",
+  },
+  {
+    type: "Driver Coordination Issue",
+    keywords: ["driver not aware", "driver hasn't arrived", "driver has not arrived", "not informed"],
+    severity: "high",
+    ownerAction: "Contact the driver and resolve the coordination issue.",
+  },
+];
+
+const fieldLabels: Record<TripFieldKey, string> = {
+  serviceType: "service type",
+  pickupLocation: "pickup location",
+  dropoffLocation: "drop-off location",
+  airport: "airport",
+  terminal: "terminal",
+  date: "transfer date",
+  time: "pickup time",
+  flightNumber: "flight number",
+  flightTime: "flight time",
+  passengerCount: "number of passengers",
+  luggageCount: "luggage count",
+  vehiclePreference: "vehicle preference",
+};
+
+const numberWords: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+};
+
+export async function analyzeCustomerTurn(params: {
+  message: string;
+  currentTripDetails: TripDetails;
+  configuration: BusinessConfiguration;
+  existingBossItems: ExistingBossInboxItem[];
+  recentMessages?: ConversationMessage[];
+}): Promise<WorkflowResult> {
+  const now = new Date();
+
+  let tripDetails: TripDetails;
+  let contact: CapturedContact | undefined;
+  let detectedEvents: DetectedEvent[];
+
+  if (hasRealAI) {
+    // Prefer real LLM with structured outputs (per project architecture rules)
+    [tripDetails, contact, detectedEvents] = await Promise.all([
+      extractTripDetailsWithAI(params.message, params.currentTripDetails, params.configuration),
+      extractContactWithAI(params.message),
+      detectEventsWithAI(params.message, params.configuration),
+    ]);
+  } else {
+    // Fallback to original rule-based logic
+    tripDetails = mergeTripDetails(params.currentTripDetails, params.message);
+    contact = extractContact(params.message);
+    detectedEvents = detectEvents(params.message);
+  }
+
+  const missingFields = getMissingQuoteFields(tripDetails);
+
+  let quote: QuoteSuggestion | undefined;
+  if (hasRealAI) {
+    quote = await suggestQuoteWithAI(tripDetails, params.configuration);
+  } else {
+    quote = maybeCreateQuoteSuggestion(tripDetails, params.configuration, missingFields);
+  }
+
+  const bossInboxItems = createBossInboxItems({
+    detectedEvents,
+    quote,
+    tripDetails,
+    existingBossItems: params.existingBossItems,
+    createdAt: formatTime(now),
+  });
+
+  let aiMessage: ConversationMessage;
+  if (hasRealAI) {
+    const text = await generateAiReplyWithAI({
+      customerMessage: params.message,
+      tripDetails,
+      contact,
+      detectedEvents,
+      missingFields,
+      quote,
+      configuration: params.configuration,
+      recentMessages: params.recentMessages,
+    });
+    aiMessage = {
+      id: `msg_ai_${Date.now()}`,
+      role: "ai",
+      text,
+      createdAt: formatTime(now),
+      channel: "website_widget",
+    };
+  } else {
+    aiMessage = createAiMessage({
+      customerMessage: params.message,
+      tripDetails,
+      contact,
+      detectedEvents,
+      missingFields,
+      quote,
+      createdAt: formatTime(now),
+    });
+  }
+
+  return {
+    aiMessage,
+    tripDetails,
+    contact,
+    detectedEvents,
+    bossInboxItems,
+  };
+}
+
+function mergeTripDetails(current: TripDetails, message: string): TripDetails {
+  const lower = message.toLowerCase();
+  const next: TripDetails = { ...current };
+  const route = message.match(/from\s+(.+?)\s+to\s+(.+?)(?:[.,]|$|\s+on\s+|\s+at\s+|\s+with\s+|\s+for\s+)/i);
+  const fromOnly = message.match(/(?:collect\s+\w+\s+\w+\s+from|collect\s+\w+\s+from|from)\s+(.+?)(?:\s+at\s+|\s+on\s+|[.,]|$)/i);
+  const travelingTo = message.match(/(?:traveling|travelling|going)\s+to\s+(.+?)(?:[.,]|$)/i);
+  const dropOnly = message.match(/drop(?:\s|-)?off\s+(?:is|at|to)?\s*([a-z0-9\s'-]+)(?:[.,]|$)/i);
+  const pickupOnly = message.match(/pick(?:\s|-)?up\s+(?:is|at|from)?\s*([a-z0-9\s'-]+)(?:[.,]|$)/i);
+  const flight = message.match(/\b[A-Z]{2}\s?\d{1,4}\b/i);
+  const time = message.match(/\b(?:[01]?\d|2[0-3])[:.][0-5]\d\s*(?:am|pm)?\b|\b\d{1,2}\s?(?:am|pm)\b/i);
+  const numberPattern = "\\d+|one|two|three|four|five|six|seven|eight|nine|ten";
+  const passengers = message.match(new RegExp(`\\b(${numberPattern})\\s*(?:passengers?|people|pax|persons?|adults?)\\b`, "i"));
+  const luggage = message.match(new RegExp(`\\b(${numberPattern})\\s*(?:small|medium|large|sized|medium-sized|large-sized|small-sized|\\s|-)*(?:bags?|luggage|suitcases?)\\b`, "i"));
+  const terminal = message.match(new RegExp(`\\bterminal\\s*(${numberPattern})\\b`, "i"));
+
+  if (route) {
+    next.pickupLocation = cleanText(route[1]);
+    next.dropoffLocation = cleanText(route[2]);
+  }
+
+  if (!next.pickupLocation && pickupOnly) {
+    next.pickupLocation = cleanText(pickupOnly[1]);
+  }
+
+  if (!next.pickupLocation && fromOnly) {
+    next.pickupLocation = cleanText(fromOnly[1]);
+  }
+
+  if (!next.dropoffLocation && travelingTo) {
+    next.dropoffLocation = cleanText(travelingTo[1]);
+  }
+
+  if (!next.dropoffLocation && dropOnly) {
+    next.dropoffLocation = cleanText(dropOnly[1]);
+  }
+
+  if (lower.includes("airport") && !next.pickupLocation && !lower.includes("drop")) {
+    next.pickupLocation = "Airport";
+  }
+
+  if (lower.includes("airport pickup") || lower.includes("arrival") || lower.includes("collect") && lower.includes("airport")) {
+    next.serviceType = "airport_pickup";
+  } else if (
+    lower.includes("airport drop") ||
+    lower.includes("departure transfer") ||
+    lower.includes("destination airport") ||
+    lower.includes("to narita") ||
+    lower.includes("to haneda") ||
+    lower.includes("to kansai")
+  ) {
+    next.serviceType = "airport_dropoff";
+  } else if (lower.includes("round trip") || lower.includes("return pickup")) {
+    next.serviceType = "round_trip";
+  } else if (lower.includes("day tour") || lower.includes("10 hours") || lower.includes("explore")) {
+    next.serviceType = "day_tour";
+  } else if (lower.includes("hotel to") || lower.includes("city")) {
+    next.serviceType = "city_transfer";
+  }
+
+  if (lower.includes("narita")) {
+    next.airport = "Narita";
+  } else if (lower.includes("haneda")) {
+    next.airport = "Haneda";
+  } else if (lower.includes("kansai")) {
+    next.airport = "Kansai";
+  }
+
+  if (terminal) {
+    next.terminal = `Terminal ${formatNumberToken(terminal[1])}`;
+  }
+
+  if (lower.includes("tomorrow")) {
+    next.date = "Tomorrow";
+  } else if (lower.includes("today")) {
+    next.date = "Today";
+  } else {
+    const date = message.match(/\b(?:\d{1,2}\s+)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*(?:\s+\d{1,2})?\b|\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b/i);
+    if (date) next.date = date[0];
+  }
+
+  if (time) {
+    next.time = normalizeTime(time[0]);
+    if (next.serviceType === "airport_pickup" && !next.flightTime) {
+      next.flightTime = `${next.time} arrival`;
+    }
+  }
+  if (flight) next.flightNumber = flight[0].toUpperCase().replace(/\s+/, " ");
+  if (passengers) next.passengerCount = parseNumberToken(passengers[1]);
+  if (luggage) next.luggageCount = parseNumberToken(luggage[1]);
+
+  if (lower.includes("van") || lower.includes("minivan") || lower.includes("海狮") || lower.includes("hiace")) {
+    next.vehiclePreference = "丰田海狮";
+  } else if (lower.includes("alphard") || lower.includes("阿尔法")) {
+    next.vehiclePreference = "丰田阿尔法";
+  } else if (lower.includes("suv")) {
+    next.vehiclePreference = "SUV";
+  } else if (lower.includes("sedan")) {
+    next.vehiclePreference = "Sedan";
+  }
+
+  const specialRequests = new Set(next.specialRequests ?? []);
+  if (lower.includes("receipt") || lower.includes("invoice")) specialRequests.add("Receipt requested");
+  if (lower.includes("english-speaking driver") || lower.includes("english speaking driver")) {
+    specialRequests.add("English-speaking driver requested");
+  }
+  if (lower.includes("same driver")) specialRequests.add("Same driver requested");
+  if (lower.includes("cash")) specialRequests.add("Cash payment after service");
+  if (specialRequests.size > 0) next.specialRequests = Array.from(specialRequests);
+
+  return next;
+}
+
+function detectEvents(message: string): DetectedEvent[] {
+  const lower = message.toLowerCase();
+
+  return eventKeywords
+    .filter((event) => event.keywords.some((keyword) => lower.includes(keyword)))
+    .map((event, index) => ({
+      id: `event_${event.type.toLowerCase().replaceAll(" ", "_")}_${Date.now()}_${index}`,
+      eventType: event.type,
+      summary: createEventSummary(event.type, message),
+      suggestedOwnerAction: event.ownerAction,
+      severity: event.severity,
+      status: "pending",
+    }));
+}
+
+function maybeCreateQuoteSuggestion(
+  tripDetails: TripDetails,
+  configuration: BusinessConfiguration,
+  missingFields: TripFieldKey[],
+): QuoteSuggestion | undefined {
+  if (missingFields.length > 0) return undefined;
+
+  const wantsLargeVehicle =
+    tripDetails.vehiclePreference?.includes("海狮") || tripDetails.vehiclePreference?.toLowerCase().includes("van") ||
+    (tripDetails.passengerCount ?? 0) >= 4 ||
+    (tripDetails.luggageCount ?? 0) >= 4;
+
+  const pricingRule = wantsLargeVehicle
+    ? configuration.pricingRules.find((rule) => rule.id === "price_van_airport")
+    : configuration.pricingRules.find((rule) => rule.id === "price_standard_airport");
+
+  if (!pricingRule) return undefined;
+
+  return {
+    id: `quote_${Date.now()}`,
+    serviceType: tripDetails.serviceType,
+    suggestedPrice: pricingRule.basePrice,
+    currency: pricingRule.currency,
+    vehicleType: wantsLargeVehicle ? "丰田海狮" : "丰田阿尔法",
+    includedFees: ["Tolls", "Parking fees", "Taxes"],
+    routeDistanceKm: tripDetails.routeDistanceKm,
+    estimatedDriveTimeMinutes: tripDetails.estimatedDriveTimeMinutes,
+    reason: `${pricingRule.label} applies based on route details, passengers, and luggage.`,
+    confidence: wantsLargeVehicle ? 88 : 82,
+    missingFields,
+  };
+}
+
+function createBossInboxItems(params: {
+  detectedEvents: DetectedEvent[];
+  quote?: QuoteSuggestion;
+  tripDetails: TripDetails;
+  existingBossItems: ExistingBossInboxItem[];
+  createdAt: string;
+}): BossInboxItem[] {
+  const existingPendingTypes = new Set(
+    params.existingBossItems
+      .filter((item) => item.status === "pending")
+      .map((item) => item.event?.eventType ?? item.type),
+  );
+
+  const eventItems = params.detectedEvents
+    .filter((event) => !existingPendingTypes.has(event.eventType))
+    .map((event): BossInboxItem => ({
+      id: `boss_${event.id}`,
+      type: mapEventToBossType(event.eventType),
+      decisionType: mapEventToDecisionType(event.eventType),
+      status: "pending",
+      customerName: "Website visitor",
+      summary: event.summary,
+      recommendation: event.suggestedOwnerAction,
+      reason: "This event requires owner review under the V1 escalation rules.",
+      confidence: event.severity === "high" ? 92 : 84,
+      createdAt: params.createdAt,
+      event,
+    }));
+
+  const quoteItem =
+    params.quote && !existingPendingTypes.has("quote_approval")
+      ? [
+          {
+            id: `boss_${params.quote.id}`,
+            type: "quote_approval" as const,
+            decisionType: "Approve quote",
+            status: "pending" as const,
+            customerName: "Website visitor",
+            summary: summarizeTrip(params.tripDetails),
+            recommendation: `Approve ${params.quote.currency} ${params.quote.suggestedPrice} quote.`,
+            reason: params.quote.reason,
+            confidence: params.quote.confidence,
+            createdAt: params.createdAt,
+            quote: params.quote,
+          },
+        ]
+      : [];
+
+  return [...eventItems, ...quoteItem];
+}
+
+function createAiMessage(params: {
+  customerMessage: string;
+  tripDetails: TripDetails;
+  contact?: CapturedContact;
+  detectedEvents: DetectedEvent[];
+  missingFields: TripFieldKey[];
+  quote?: QuoteSuggestion;
+  createdAt: string;
+}): ConversationMessage {
+  const purchaseIntent = hasPurchaseIntent(params.customerMessage);
+  const eventText =
+    params.detectedEvents.length > 0
+      ? " I have flagged this for owner review because it needs a business decision."
+      : "";
+  let text: string;
+
+  if (params.contact) {
+    text = `Thanks, I have saved your ${params.contact.method}.`;
+  } else if (params.quote) {
+    text = `I have enough trip details to prepare a ${params.quote.currency} ${params.quote.suggestedPrice} quote suggestion for the owner.${eventText}`;
+  } else if (params.missingFields.length > 0) {
+    const nextField = params.missingFields[0];
+    const contactAsk = purchaseIntent
+      ? " Also, what is the best WhatsApp, Telegram, or email for updates?"
+      : "";
+    text = `Got it. What is the ${fieldLabels[nextField]}?${contactAsk}${eventText}`;
+  } else {
+    text = `Thanks, I will prepare the next step for the owner.${eventText}`;
+  }
+
+  return {
+    id: `msg_ai_${Date.now()}`,
+    role: "ai",
+    text,
+    createdAt: params.createdAt,
+    channel: "website_widget",
+  };
+}
+
+function extractContact(message: string): CapturedContact | undefined {
+  const email = message.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  const telegram = message.match(/@[a-z0-9_]{4,}/i);
+  const whatsapp = message.match(/(?:whatsapp|wa)?\s*(\+?\d[\d\s-]{7,}\d)/i);
+
+  if (email) return { method: "Email", value: email[0] };
+  if (telegram) return { method: "Telegram", value: telegram[0] };
+  if (whatsapp) return { method: "WhatsApp", value: whatsapp[1].trim() };
+
+  return undefined;
+}
+
+function hasPurchaseIntent(message: string): boolean {
+  const lower = message.toLowerCase();
+  return [
+    "price",
+    "quote",
+    "available",
+    "availability",
+    "book",
+    "booking",
+    "airport",
+    "pickup",
+    "drop",
+    "vehicle",
+    "van",
+    "sedan",
+  ].some((keyword) => lower.includes(keyword));
+}
+
+function summarizeTrip(tripDetails: TripDetails): string {
+  return [
+    tripDetails.serviceType && `Service: ${formatServiceType(tripDetails.serviceType)}`,
+    tripDetails.pickupLocation && `Pickup: ${tripDetails.pickupLocation}`,
+    tripDetails.dropoffLocation && `Drop-off: ${tripDetails.dropoffLocation}`,
+    tripDetails.date && `Date: ${tripDetails.date}`,
+    tripDetails.time && `Time: ${tripDetails.time}`,
+    tripDetails.passengerCount && `${tripDetails.passengerCount} passengers`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function mapEventToBossType(eventType: EventType): BossInboxItem["type"] {
+  if (eventType === "Receipt Request") return "receipt_request";
+  if (eventType === "Payment Coordination") return "payment_coordination";
+  if (eventType === "Driver Assignment Needed" || eventType === "Driver Coordination Issue") {
+    return "driver_assignment";
+  }
+  if (
+    eventType === "Pickup Time Change" ||
+    eventType === "Early Pickup Request" ||
+    eventType === "Route Change"
+  ) {
+    return "change_request";
+  }
+  return "event_review";
+}
+
+function mapEventToDecisionType(eventType: EventType): string {
+  const labels: Record<EventType, string> = {
+    "Discount Request": "Approve discount",
+    "Urgent Booking": "Confirm urgent availability",
+    "Route Change": "Confirm route change",
+    "Flight Delay": "Review flight delay",
+    Complaint: "Handle complaint",
+    "Cancellation Request": "Review cancellation",
+    "Receipt Request": "Prepare receipt",
+    "Driver Assignment Needed": "Send driver details",
+    "Pickup Time Change": "Confirm pickup time",
+    "Early Pickup Request": "Check early pickup",
+    "Same Driver Request": "Check same driver",
+    "English-speaking Driver Request": "Check English-speaking driver",
+    "Multi-leg Itinerary Request": "Prepare multi-leg quote",
+    "Round Trip Discount": "Approve round-trip discount",
+    "Payment Coordination": "Coordinate payment",
+    "Driver Coordination Issue": "Resolve driver issue",
+  };
+
+  return labels[eventType];
+}
+
+function formatServiceType(serviceType: NonNullable<TripDetails["serviceType"]>): string {
+  return serviceType
+    .split("_")
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function createEventSummary(type: EventType, message: string): string {
+  return `${type} detected from customer message: "${message.slice(0, 110)}${message.length > 110 ? "..." : ""}"`;
+}
+
+function cleanText(value: string): string {
+  return value.trim().replace(/\s+/g, " ").replace(/\bthe\b$/i, "").trim();
+}
+
+function parseNumberToken(value: string): number {
+  const normalized = value.toLowerCase();
+  return numberWords[normalized] ?? Number(normalized);
+}
+
+function formatNumberToken(value: string): string {
+  return String(parseNumberToken(value));
+}
+
+function normalizeTime(value: string): string {
+  return value.trim().replace(".", ":").replace(/\s+/g, " ").toUpperCase();
+}
+
+function formatTime(date: Date): string {
+  return date.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}

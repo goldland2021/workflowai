@@ -1,0 +1,373 @@
+有，而且我认为**PRD 其实只占 30%**。
+
+如果你直接把 PRD 发给 Codex，它能做出来，但大概率会做成一个"功能完整、体验普通"的产品。
+
+我建议你再准备 **6 份文档**，Codex 的开发质量会明显提高。
+
+---
+
+# ① Product Vision（必须）
+
+只有一页。
+
+告诉 Codex：
+
+> **这个产品到底是什么。**
+
+例如：
+
+> AI Employee is not a chatbot.
+>
+> It is an AI front office for service businesses.
+>
+> The goal is to capture customers, qualify leads, detect business events, and escalate business decisions to the owner.
+>
+> Every feature must reduce the owner's workload.
+
+这份文档非常重要。
+
+以后无论开发什么。
+
+都不能偏离。
+
+---
+
+# ② Design Principles（必须）
+
+例如：
+
+## Principle 1
+
+AI always replies immediately.
+
+---
+
+## Principle 2
+
+AI always tries to capture customer contact.
+
+---
+
+## Principle 3
+
+AI never makes business decisions.
+
+---
+
+## Principle 4
+
+Owner should finish any approval within 10 seconds.
+
+---
+
+## Principle 5
+
+Every feature should save time.
+
+不是增加学习成本。
+
+以后：
+
+任何代码。
+
+都遵守。
+
+---
+
+# ③ UX Specification（必须）
+
+这个不是 UI。
+
+而是：
+
+交互原则。
+
+例如：
+
+不要：
+
+```text
+Upload PDF
+```
+
+而是：
+
+```text
+Let's train your employee.
+```
+
+不要：
+
+```text
+Create Workspace
+```
+
+而是：
+
+```text
+Hire your AI employee.
+```
+
+不要：
+
+```text
+Knowledge Base
+```
+
+而是：
+
+```text
+Company Knowledge
+```
+
+这些：
+
+都是：
+
+产品体验。
+
+---
+
+# ④ UI Style Guide（建议）
+
+告诉 Codex：
+
+产品：
+
+长什么样。
+
+例如：
+
+参考：
+
+* Linear
+* Notion
+* Stripe
+* Cursor
+
+不要：
+
+Salesforce。
+
+不要：
+
+HubSpot。
+
+不要：
+
+复杂 CRM。
+
+一句话：
+
+> **Minimal. Fast. Clean.**
+
+---
+
+# ⑤ Technical Architecture（必须）
+
+例如：
+
+```text
+Next.js 15
+
+↓
+
+Supabase
+
+↓
+
+OpenAI API
+
+↓
+
+Edge Functions
+
+↓
+
+Postgres
+
+↓
+
+pgvector
+
+↓
+
+Vercel
+```
+
+还有：
+
+Authentication。
+
+Storage。
+
+Embedding。
+
+Webhook。
+
+Redis（以后）。
+
+都写清楚。
+
+这样：
+
+Codex：
+
+不会：
+
+乱选。
+
+---
+
+# ⑥ AI Prompt Specification（我认为最重要）
+
+这是：
+
+整个产品：
+
+最值钱的地方。
+
+例如：
+
+## Conversation AI
+
+目标：
+
+获得联系方式。
+
+不是聊天。
+
+---
+
+## Event AI
+
+目标：
+
+识别：
+
+Discount。
+
+Complaint。
+
+Delay。
+
+不要：
+
+自己决定。
+
+---
+
+## Quote AI
+
+目标：
+
+建议。
+
+不是决定。
+
+---
+
+## Boss AI
+
+目标：
+
+整理。
+
+不是聊天。
+
+这些 Prompt，建议单独管理，而不是散落在代码里。
+
+---
+
+# 我还建议加一个文件
+
+## PROJECT_RULES.md
+
+以后：
+
+Codex：
+
+每次开发。
+
+都要看。
+
+例如：
+
+```text
+Never build features
+outside the PRD.
+
+Never invent business rules.
+
+Ask if requirements are unclear.
+
+Prefer reusable components.
+
+Keep UI minimal.
+
+Use TypeScript.
+
+Use Server Actions.
+
+Use shadcn/ui.
+
+Use TailwindCSS.
+
+Never duplicate logic.
+```
+
+---
+
+# 还有一个文件
+
+## PROJECT_CONTEXT.md
+
+告诉 Codex：
+
+为什么。
+
+例如：
+
+> This product was inspired by a real airport transfer business.
+
+The owner often loses customers because:
+
+* cannot reply immediately
+* customers leave website
+* business decisions require owner approval
+
+This product solves those problems.
+
+这会让 Codex 更理解业务，而不仅仅是代码。
+
+---
+
+# 我建议整个项目目录长这样
+
+```text
+docs/
+
+├── PRODUCT_VISION.md
+├── DESIGN_PRINCIPLES.md
+├── UX_GUIDELINES.md
+├── UI_STYLE_GUIDE.md
+├── TECH_ARCHITECTURE.md
+├── AI_PROMPTS.md
+├── PROJECT_RULES.md
+├── PROJECT_CONTEXT.md
+│
+├── prd/
+│   ├── PRD-001 Authentication.md
+│   ├── PRD-002 Company.md
+│   ├── PRD-003 Train Employee.md
+│   ├── PRD-004 Knowledge.md
+│   ├── ...
+│
+└── database/
+    ├── schema.md
+    ├── erd.md
+    └── migrations/
+```
+
+---
+
