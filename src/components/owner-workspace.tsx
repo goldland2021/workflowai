@@ -1,17 +1,20 @@
-"use client";
+﻿"use client";
 
 import {
   AlertTriangle,
   ArrowRight,
   Bot,
   CalendarCheck,
+  Car,
   Check,
   ClipboardCheck,
   Clock,
+  CreditCard,
   Edit3,
   Inbox,
   MessageSquareText,
   Plane,
+  ReceiptText,
   Send,
   ShieldCheck,
   Sparkles,
@@ -34,17 +37,26 @@ import type {
   ConversationMessage,
   DemoSnapshot,
   DetectedEvent,
+  DriverDetails,
   FAQ,
   QuoteSuggestion,
+  ReceiptRequest,
   TripDetails,
   Vehicle,
 } from "@/lib/domain/types";
 import type { AIStatus } from "@/lib/ai/status-types";
+import { ChatBubble } from "./owner-workspace/chat-bubble";
+import { FieldTracker } from "./owner-workspace/field-tracker";
+import { BossInboxCard } from "./owner-workspace/boss-inbox-card";
+import { BookingSummaryView } from "./owner-workspace/booking-summary-view";
+import { FulfillmentTracker } from "./owner-workspace/fulfillment-tracker";
+import { Panel, Metric, StatusPill, ProgressRows } from "./owner-workspace/panel";
+import { ErrorBoundary } from "../components/error-boundary";
+import { LoadingSkeleton, PanelSkeleton } from "../components/loading-skeleton";
+
 
 const STORAGE_KEY = "ai-employee-workspace-state-v1";
 
-type QuoteEditField = "suggestedPrice" | "currency" | "vehicleType" | "reason" | "includedFees";
-type QuoteEditValue = QuoteSuggestion[QuoteEditField];
 
 interface OwnerWorkspaceProps {
   snapshot: DemoSnapshot;
@@ -58,10 +70,49 @@ interface SavedWorkspaceState {
   events: DetectedEvent[];
   bossInbox: BossInboxItem[];
   businessConfig: BusinessConfiguration;
+  driverDetails: DriverDetails;
+  paymentMethod: string;
+  receiptRequest: ReceiptRequest;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function readOptionalNumber(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" ? value : undefined;
+}
+
+function parseDriverDetails(value: unknown): DriverDetails | undefined {
+  if (!isRecord(value)) return undefined;
+
+  const details: DriverDetails = {
+    name: readOptionalString(value, "name"),
+    phone: readOptionalString(value, "phone"),
+    vehicle: readOptionalString(value, "vehicle"),
+    color: readOptionalString(value, "color"),
+    licensePlate: readOptionalString(value, "licensePlate"),
+    whatsapp: readOptionalString(value, "whatsapp"),
+  };
+
+  return Object.values(details).some(Boolean) ? details : undefined;
+}
+
+function parseReceiptRequest(value: unknown): ReceiptRequest | undefined {
+  if (!isRecord(value) || typeof value.needed !== "boolean") return undefined;
+
+  return {
+    needed: value.needed,
+    receiptName: readOptionalString(value, "receiptName"),
+    amount: readOptionalNumber(value, "amount"),
+    currency: readOptionalString(value, "currency"),
+  };
 }
 
 function readSavedWorkspace(): Partial<SavedWorkspaceState> {
@@ -95,6 +146,11 @@ function readSavedWorkspace(): Partial<SavedWorkspaceState> {
     if (businessConfig.success) {
       state.businessConfig = businessConfig.data;
     }
+    state.driverDetails = parseDriverDetails(parsed.driverDetails) ?? {};
+    if (typeof parsed.paymentMethod === "string") {
+      state.paymentMethod = parsed.paymentMethod;
+    }
+    state.receiptRequest = parseReceiptRequest(parsed.receiptRequest) ?? { needed: false };
 
     return state;
   } catch {
@@ -103,31 +159,33 @@ function readSavedWorkspace(): Partial<SavedWorkspaceState> {
 }
 
 export function OwnerWorkspace({ snapshot, aiStatus }: OwnerWorkspaceProps) {
-  // Initialize from localStorage if available (simple persistence)
-  const [messages, setMessages] = useState<ConversationMessage[]>(() => {
-    return readSavedWorkspace().messages ?? snapshot.conversation;
-  });
-
-  const [tripDetails, setTripDetails] = useState<TripDetails>(() => {
-    return readSavedWorkspace().tripDetails ?? snapshot.tripDetails;
-  });
-
-  const [contact, setContact] = useState<CapturedContact | undefined>(() => {
-    return readSavedWorkspace().contact ?? snapshot.contact;
-  });
-
-  const [events, setEvents] = useState<DetectedEvent[]>(() => {
-    return readSavedWorkspace().events ?? snapshot.detectedEvents;
-  });
-
-  const [bossInbox, setBossInbox] = useState<BossInboxItem[]>(() => {
-    return readSavedWorkspace().bossInbox ?? snapshot.bossInbox;
-  });
+  // Always start with snapshot values for SSR/hydration safety.
+  // Load from localStorage in useEffect after mount to avoid mismatch.
+  const [messages, setMessages] = useState<ConversationMessage[]>(snapshot.conversation);
+  const [tripDetails, setTripDetails] = useState<TripDetails>(snapshot.tripDetails);
+  const [contact, setContact] = useState<CapturedContact | undefined>(snapshot.contact);
+  const [events, setEvents] = useState<DetectedEvent[]>(snapshot.detectedEvents);
+  const [bossInbox, setBossInbox] = useState<BossInboxItem[]>(snapshot.bossInbox);
 
   // Editable business configuration for teaching the AI / fixing data
-  const [businessConfig, setBusinessConfig] = useState<BusinessConfiguration>(() => {
-    return readSavedWorkspace().businessConfig ?? snapshot.businessConfiguration;
-  });
+  const [businessConfig, setBusinessConfig] = useState<BusinessConfiguration>(snapshot.businessConfiguration);
+  const [driverDetails, setDriverDetails] = useState<DriverDetails>(snapshot.bookingSummary.driverDetails ?? {});
+  const [paymentMethod, setPaymentMethod] = useState<string>(snapshot.bookingSummary.paymentMethod ?? "Cash to driver after service");
+  const [receiptRequest, setReceiptRequest] = useState<ReceiptRequest>(snapshot.bookingSummary.receiptRequest ?? { needed: false });
+
+  // Load persisted state after hydration
+  useEffect(() => {
+    const saved = readSavedWorkspace();
+    if (saved.messages && saved.messages.length > 0) setMessages(saved.messages);
+    if (saved.tripDetails) setTripDetails(saved.tripDetails);
+    if ("contact" in saved) setContact(saved.contact);
+    if (saved.events) setEvents(saved.events);
+    if (saved.bossInbox && saved.bossInbox.length > 0) setBossInbox(saved.bossInbox);
+    if (saved.businessConfig) setBusinessConfig(saved.businessConfig);
+    if (saved.driverDetails) setDriverDetails(saved.driverDetails);
+    if (saved.paymentMethod) setPaymentMethod(saved.paymentMethod);
+    if (saved.receiptRequest) setReceiptRequest(saved.receiptRequest);
+  }, []);
 
   const [input, setInput] = useState("");
   const [isThinking, setIsThinking] = useState(false);
@@ -146,6 +204,9 @@ export function OwnerWorkspace({ snapshot, aiStatus }: OwnerWorkspaceProps) {
     setEvents(snapshot.detectedEvents);
     setBossInbox(snapshot.bossInbox);
     setBusinessConfig(snapshot.businessConfiguration);
+    setDriverDetails(snapshot.bookingSummary.driverDetails ?? {});
+    setPaymentMethod(snapshot.bookingSummary.paymentMethod ?? "Cash to driver after service");
+    setReceiptRequest(snapshot.bookingSummary.receiptRequest ?? { needed: false });
     setInput("");
     setIsThinking(false);
     setEditingItemId(null);
@@ -163,13 +224,16 @@ export function OwnerWorkspace({ snapshot, aiStatus }: OwnerWorkspaceProps) {
         events,
         bossInbox,
         businessConfig,
+        driverDetails,
+        paymentMethod,
+        receiptRequest,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToSave));
     } catch (e) {
       // Ignore storage errors (e.g. quota or private mode)
       console.warn('Failed to persist workspace state', e);
     }
-  }, [messages, tripDetails, contact, events, bossInbox, businessConfig]);
+  }, [messages, tripDetails, contact, events, bossInbox, businessConfig, driverDetails, paymentMethod, receiptRequest]);
 
   function addAiFollowUp(text: string) {
     const now = new Date().toLocaleTimeString("en-US", {
@@ -196,8 +260,16 @@ export function OwnerWorkspace({ snapshot, aiStatus }: OwnerWorkspaceProps) {
   );
 
   const bookingSummary: BookingSummary = useMemo(
-    () => createBookingSummary({ tripDetails, contact, approvedQuote }),
-    [approvedQuote, contact, tripDetails],
+    () =>
+      createBookingSummary({
+        tripDetails,
+        contact,
+        approvedQuote,
+        driverDetails,
+        paymentMethod,
+        receiptRequest,
+      }),
+    [approvedQuote, contact, driverDetails, paymentMethod, receiptRequest, tripDetails],
   );
 
   const missingFields = getMissingQuoteFields(tripDetails);
@@ -433,8 +505,22 @@ ${updatedQuote.reason ? `说明：${updatedQuote.reason}` : ""}
     }));
   }
 
+  function updateDriverDetail(field: keyof DriverDetails, value: string) {
+    setDriverDetails((current) => ({
+      ...current,
+      [field]: value || undefined,
+    }));
+  }
+
+  function updateReceiptRequest(changes: Partial<ReceiptRequest>) {
+    setReceiptRequest((current) => ({
+      ...current,
+      ...changes,
+    }));
+  }
+
   return (
-    <main className="min-h-screen bg-[#f7f5ef] text-stone-950">
+        <ErrorBoundary><main className="min-h-screen bg-[#f7f5ef] text-stone-950">
       <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-5 px-4 py-4 sm:px-6 lg:px-8">
         <header className="flex flex-col gap-4 border-b border-stone-300 pb-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-3">
@@ -463,7 +549,7 @@ ${updatedQuote.reason ? `说明：${updatedQuote.reason}` : ""}
 
         <section className="grid gap-5 xl:grid-cols-[280px_minmax(0,1fr)_360px]">
           <aside className="flex min-w-0 flex-col gap-4">
-            <Panel title="训练员工" icon={<Sparkles size={18} aria-hidden="true" />}>
+            <Panel title="训练员工（编辑此处可教AI知识）" icon={<Sparkles size={18} aria-hidden="true" />}>
               <div className="space-y-4">
                 <div>
                   <label className="text-xs font-medium text-stone-500">公司名称</label>
@@ -500,6 +586,7 @@ ${updatedQuote.reason ? `说明：${updatedQuote.reason}` : ""}
                       </span>
                     ))}
                   </div>
+                  <p className="text-[10px] text-emerald-700 mt-2">提示：修改上方公司信息、车型、知识库后，AI会立即使用新知识回复。</p>
                 </div>
 
                 {/* 可用车型 - 可编辑，用于教AI */}
@@ -579,7 +666,7 @@ ${updatedQuote.reason ? `说明：${updatedQuote.reason}` : ""}
               </div>
             </Panel>
 
-            <Panel title="公司知识库（可编辑，教AI用）" icon={<ShieldCheck size={18} aria-hidden="true" />}>
+            <Panel title="公司知识库（编辑后AI会立即使用）" icon={<ShieldCheck size={18} aria-hidden="true" />}>
               <div className="space-y-3">
                 {businessConfig.faq.map((item, idx) => (
                   <div key={idx} className="border-b border-stone-200 pb-3 last:border-0 last:pb-0 space-y-1">
@@ -733,377 +820,21 @@ ${updatedQuote.reason ? `说明：${updatedQuote.reason}` : ""}
             <Panel title="预订确认" icon={<ClipboardCheck size={18} aria-hidden="true" />}>
               <BookingSummaryView bookingSummary={bookingSummary} />
             </Panel>
+
+            <Panel title="履约跟踪" icon={<Car size={18} aria-hidden="true" />}>
+              <FulfillmentTracker
+                driverDetails={driverDetails}
+                paymentMethod={paymentMethod}
+                receiptRequest={receiptRequest}
+                onDriverChange={updateDriverDetail}
+                onPaymentMethodChange={setPaymentMethod}
+                onReceiptChange={updateReceiptRequest}
+              />
+            </Panel>
           </aside>
         </section>
       </div>
-    </main>
+        </main></ErrorBoundary>
   );
 }
 
-function Panel({
-  title,
-  icon,
-  action,
-  children,
-  compact = false,
-}: {
-  title: string;
-  icon: React.ReactNode;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-  compact?: boolean;
-}) {
-  return (
-    <section className="min-w-0 rounded-lg border border-stone-300 bg-[#fffdf8] shadow-sm shadow-stone-200/60">
-      <div className="flex items-center justify-between gap-3 border-b border-stone-200 px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="text-emerald-800">{icon}</span>
-          <h2 className="truncate text-sm font-semibold text-stone-950">{title}</h2>
-        </div>
-        {action}
-      </div>
-      <div className={compact ? "p-3" : "p-4"}>{children}</div>
-    </section>
-  );
-}
-
-function Metric({ label, value, tone }: { label: string; value: string; tone: "emerald" | "amber" | "indigo" | "rose" }) {
-  const toneClass = {
-    emerald: "border-emerald-700/30 bg-emerald-50 text-emerald-900",
-    amber: "border-amber-700/30 bg-amber-50 text-amber-900",
-    indigo: "border-indigo-700/30 bg-indigo-50 text-indigo-900",
-    rose: "border-rose-700/30 bg-rose-50 text-rose-900",
-  }[tone];
-
-  return (
-    <div className={`rounded-lg border px-3 py-2 ${toneClass}`}>
-      <p className="text-xs font-medium">{label}</p>
-      <p className="mt-1 text-xl font-semibold">{value}</p>
-    </div>
-  );
-}
-
-function StatusPill({ label }: { label: string }) {
-  return (
-    <span className="rounded-md border border-stone-300 bg-white px-2 py-1 text-xs font-semibold uppercase text-stone-600">
-      {label}
-    </span>
-  );
-}
-
-function ProgressRows({ rows }: { rows: Array<[string, boolean]> }) {
-  return (
-    <div className="space-y-2">
-      {rows.map(([label, complete]) => (
-        <div className="flex items-center justify-between gap-3 text-sm" key={label}>
-          <span className="text-stone-700">{label}</span>
-          <span className={complete ? "text-emerald-700" : "text-stone-400"}>
-            <Check size={16} aria-hidden="true" />
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ChatBubble({ message }: { message: ConversationMessage }) {
-  const isCustomer = message.role === "customer";
-
-  return (
-    <div className={`flex ${isCustomer ? "justify-end" : "justify-start"}`}>
-      <div
-        className={`max-w-[82%] rounded-lg px-3 py-2 text-sm leading-6 ${
-          isCustomer ? "bg-emerald-800 text-white" : "border border-stone-200 bg-stone-50 text-stone-800"
-        }`}
-      >
-        <p className="break-words">{message.text}</p>
-        <p className={`mt-1 text-[11px] ${isCustomer ? "text-emerald-100" : "text-stone-500"}`}>{message.createdAt}</p>
-      </div>
-    </div>
-  );
-}
-
-function FieldTracker({
-  tripDetails,
-  missingFields,
-}: {
-  tripDetails: TripDetails;
-  missingFields: Array<keyof TripDetails>;
-}) {
-  const serviceMap: Record<string, string> = {
-    airport_pickup: "机场接机",
-    airport_dropoff: "机场送机",
-    city_transfer: "城市接送",
-    round_trip: "往返",
-    day_tour: "一日游",
-  };
-
-  const rows: Array<[keyof TripDetails, string, string | number | undefined]> = [
-    ["serviceType", "服务类型", serviceMap[tripDetails.serviceType || ""] || tripDetails.serviceType],
-    ["pickupLocation", "上车地点", tripDetails.pickupLocation],
-    ["dropoffLocation", "下车地点", tripDetails.dropoffLocation],
-    ["airport", "机场", tripDetails.airport],
-    ["terminal", "航站楼", tripDetails.terminal],
-    ["date", "日期", tripDetails.date],
-    ["time", "时间", tripDetails.time],
-    ["flightNumber", "航班", tripDetails.flightNumber],
-    ["passengerCount", "乘客", tripDetails.passengerCount],
-    ["luggageCount", "行李", tripDetails.luggageCount],
-    ["vehiclePreference", "车型", tripDetails.vehiclePreference],
-  ];
-
-  return (
-    <Panel title="行程字段" compact icon={<CalendarCheck size={17} aria-hidden="true" />}>
-      <div className="space-y-2">
-        {rows.map(([key, label, value]) => {
-          const missing = missingFields.includes(key);
-          return (
-            <div className="flex items-start justify-between gap-3 text-sm" key={key}>
-              <span className="text-stone-500">{label}</span>
-              <span className={`max-w-[150px] text-right font-medium ${missing ? "text-amber-700" : "text-stone-950"}`}>
-                {value ?? "缺失"}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </Panel>
-  );
-}
-
-function BossInboxCard({
-  item,
-  onUpdate,
-  editingId,
-  editForm,
-  onStartEdit,
-  onSaveEdit,
-  onCancelEdit,
-  onEditFormChange,
-}: {
-  item: BossInboxItem;
-  onUpdate: (id: string, status: BossInboxItem["status"]) => void;
-  editingId?: string | null;
-  editForm?: Partial<QuoteSuggestion>;
-  onStartEdit?: (id: string) => void;
-  onSaveEdit?: (id: string, andApprove?: boolean) => void;
-  onCancelEdit?: () => void;
-  onEditFormChange?: (field: QuoteEditField, value: QuoteEditValue) => void;
-}) {
-  const canAct = item.status === "pending" || item.status === "edited";
-  const isCurrentlyEditing = editingId === item.id;
-
-  return (
-    <article className="rounded-lg border border-stone-300 bg-white p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-stone-950">
-            {item.type === "quote_approval" ? "报价建议" : item.event?.eventType}
-          </p>
-          <p className="mt-1 text-xs font-medium uppercase text-stone-500">{item.decisionType} · {item.createdAt}</p>
-        </div>
-        <span
-          className={`rounded-md px-2 py-1 text-xs font-semibold ${
-            canAct ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"
-          }`}
-        >
-          {item.status}
-        </span>
-      </div>
-      <p className="mt-3 text-sm leading-6 text-stone-700">{item.summary}</p>
-      <div className="mt-3 rounded-md bg-stone-50 p-3">
-        <div className="flex items-center gap-2 text-sm font-semibold text-stone-950">
-          <ArrowRight size={15} aria-hidden="true" />
-          {item.recommendation}
-        </div>
-        <p className="mt-2 text-xs leading-5 text-stone-600">{item.reason}</p>
-      </div>
-      {canAct && !isCurrentlyEditing && (
-        <div className="mt-3 flex gap-2">
-          <button
-            className="inline-flex min-h-9 items-center justify-center gap-1 rounded-md bg-emerald-800 px-2 text-xs font-semibold text-white hover:bg-emerald-900"
-            onClick={() => onUpdate(item.id, "approved")}
-            title="Approve"
-            type="button"
-          >
-            <Check size={14} aria-hidden="true" />
-            批准
-          </button>
-          {item.quote && (
-            <button
-              className="inline-flex min-h-9 items-center justify-center gap-1 rounded-md border border-stone-300 bg-white px-2 text-xs font-semibold text-stone-800 hover:bg-stone-50"
-              onClick={() => onStartEdit?.(item.id)}
-              title="Edit"
-              type="button"
-            >
-              <Edit3 size={14} aria-hidden="true" />
-              编辑
-            </button>
-          )}
-          <button
-            className="inline-flex min-h-9 items-center justify-center gap-1 rounded-md border border-rose-300 bg-white px-2 text-xs font-semibold text-rose-800 hover:bg-rose-50"
-            onClick={() => onUpdate(item.id, "rejected")}
-            title="Reject"
-            type="button"
-          >
-            <X size={14} aria-hidden="true" />
-            拒绝
-          </button>
-        </div>
-      )}
-
-      {/* Edit form for this item */}
-      {isCurrentlyEditing && item.quote && (
-        <div className="mt-3 space-y-3 border-t border-stone-200 pt-3">
-          <div className="text-xs font-semibold text-amber-700">正在编辑报价</div>
-
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <label className="flex flex-col gap-1">
-              <span className="text-[10px] text-stone-500">价格</span>
-              <input
-                type="number"
-                className="rounded border border-stone-300 px-2 py-1 text-sm"
-                value={editForm?.suggestedPrice ?? item.quote.suggestedPrice}
-                onChange={(e) => onEditFormChange?.("suggestedPrice", parseFloat(e.target.value) || 0)}
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-[10px] text-stone-500">币种</span>
-              <input
-                type="text"
-                className="rounded border border-stone-300 px-2 py-1 text-sm"
-                value={editForm?.currency ?? item.quote.currency}
-                onChange={(e) => onEditFormChange?.("currency", e.target.value)}
-              />
-            </label>
-          </div>
-
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-[10px] text-stone-500">车型</span>
-            <input
-              type="text"
-              className="rounded border border-stone-300 px-2 py-1 text-sm"
-              value={editForm?.vehicleType ?? item.quote.vehicleType ?? ""}
-              onChange={(e) => onEditFormChange?.("vehicleType", e.target.value)}
-            />
-          </label>
-
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-[10px] text-stone-500">理由 / 说明</span>
-            <textarea
-              className="rounded border border-stone-300 px-2 py-1 text-sm min-h-[60px]"
-              value={editForm?.reason ?? item.quote.reason ?? ""}
-              onChange={(e) => onEditFormChange?.("reason", e.target.value)}
-            />
-          </label>
-
-          <div className="flex gap-2 pt-1">
-            <button
-              onClick={() => onSaveEdit?.(item.id, false)}
-              className="flex-1 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-stone-50"
-              type="button"
-            >
-              保存编辑
-            </button>
-            <button
-              onClick={() => onSaveEdit?.(item.id, true)}
-              className="flex-1 rounded-md bg-emerald-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-900"
-              type="button"
-            >
-              保存并批准
-            </button>
-            <button
-              onClick={() => onCancelEdit?.()}
-              className="rounded-md border border-stone-300 px-3 py-1.5 text-xs font-medium hover:bg-stone-50"
-              type="button"
-            >
-              取消
-            </button>
-          </div>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function BookingSummaryView({ bookingSummary }: { bookingSummary: BookingSummary }) {
-  const serviceMap: Record<string, string> = {
-    airport_pickup: "机场接机",
-    airport_dropoff: "机场送机",
-    city_transfer: "城市接送",
-    round_trip: "往返",
-    day_tour: "一日游",
-  };
-
-  const detailRows = [
-    ["服务", serviceMap[bookingSummary.serviceType || ""] || bookingSummary.serviceType],
-    ["上车", bookingSummary.tripDetails.pickupLocation],
-    ["下车", bookingSummary.tripDetails.dropoffLocation],
-    ["机场", bookingSummary.tripDetails.airport],
-    ["航站楼", bookingSummary.tripDetails.terminal],
-    ["日期", bookingSummary.tripDetails.date],
-    ["时间", bookingSummary.tripDetails.time],
-    ["航班", bookingSummary.tripDetails.flightNumber],
-    ["乘客", bookingSummary.tripDetails.passengerCount],
-    ["行李", bookingSummary.tripDetails.luggageCount],
-    ["车型", bookingSummary.tripDetails.vehiclePreference],
-    ["支付", bookingSummary.paymentMethod],
-  ];
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm font-semibold text-stone-950">
-          <Clock size={16} aria-hidden="true" />
-          {bookingSummary.status === "ready" ? "已就绪" : "草稿"}
-        </div>
-        {bookingSummary.approvedPrice && (
-          <span className="rounded-md bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-900">
-            {bookingSummary.currency} {bookingSummary.approvedPrice}
-          </span>
-        )}
-      </div>
-
-      <div className="space-y-2">
-        {detailRows.map(([label, value]) => (
-          <div className="flex items-start justify-between gap-3 text-sm" key={label}>
-            <span className="text-stone-500">{label}</span>
-            <span className="max-w-[220px] text-right font-medium text-stone-950">{value ?? "Missing"}</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="border-t border-stone-200 pt-3">
-        <p className="text-xs font-semibold uppercase text-stone-500">包含项目</p>
-        <p className="mt-2 text-sm leading-6 text-stone-700">
-          {bookingSummary.includedFees?.join(", ") ?? "待确认"}
-        </p>
-      </div>
-
-      <div className="border-t border-stone-200 pt-3">
-        <p className="text-xs font-semibold uppercase text-stone-500">司机信息</p>
-        <p className="mt-2 text-sm leading-6 text-stone-700">
-          {bookingSummary.driverDetails?.vehicle ?? bookingSummary.tripDetails.vehiclePreference ?? "待分配司机"}
-        </p>
-      </div>
-
-      <div className="border-t border-stone-200 pt-3">
-        <p className="text-xs font-semibold uppercase text-stone-500">备注</p>
-        <ul className="mt-2 space-y-2">
-          {bookingSummary.specialNotes.map((note) => (
-            <li className="text-sm leading-6 text-stone-700" key={note}>
-              {note}
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      <div className="border-t border-stone-200 pt-3">
-        <p className="text-xs font-semibold uppercase text-stone-500">客户消息</p>
-        <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-stone-200 bg-white p-3 text-xs leading-5 text-stone-800">
-          {bookingSummary.confirmationText}
-        </pre>
-      </div>
-    </div>
-  );
-}

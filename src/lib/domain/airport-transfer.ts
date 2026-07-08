@@ -250,7 +250,7 @@ const initialBossInbox: BossInboxItem[] = [
   {
     id: "boss_quote_001",
     type: "quote_approval",
-    decisionType: "批准报价",
+    decisionType: "Approve quote",
     status: "pending",
     customerName: "Website visitor",
     summary: "3名乘客4件行李的机场接机，T2航站楼至中央商务酒店。",
@@ -267,7 +267,7 @@ const initialBossInbox: BossInboxItem[] = [
       includedFees: ["过路费", "停车费", "税费"],
       routeDistanceKm: 76,
       estimatedDriveTimeMinutes: 78,
-      reason: "因为行李数量较多，适合丰田海狮车型。",
+      reason: "因为乘客和行李数量适中，丰田阿尔法可以提供舒适接送体验。",
       confidence: 88,
       missingFields: [],
     },
@@ -282,16 +282,11 @@ const initialBookingSummaryBase: BookingSummary = {
   approvedPrice: 118,
   currency: "USD",
   includedFees: ["过路费", "停车费", "税费"],
-  paymentMethod: "服务后现金支付给司机",
-  driverDetails: {
-    name: "Assigned driver",
-    vehicle: "丰田阿尔法",
-    color: "Black",
-  },
+  paymentMethod: "Cash to driver after service",
   receiptRequest: {
     needed: false,
   },
-  specialNotes: ["因行李数量推荐丰田海狮。", "仍待老板批准。"],
+  specialNotes: ["仍待老板批准。"],
   status: "draft",
 };
 

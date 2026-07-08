@@ -61,6 +61,9 @@ export async function generateAiReplyWithAI(params: {
 可用车型（必须根据乘客数和行李推荐）：
 ${vehiclesText}
 
+公司知识库（FAQ - 回答客户问题时优先参考）：
+${(configuration?.faq || []).map(f => `- ${f.question}\n  答案：${f.answer}`).join('\n') || '（暂无）'}
+
 AI行为边界（必须严格遵守）：
 ${(keyPolicies.aiBoundaries || []).map(b => `- ${b}`).join('\n')}
 
@@ -84,6 +87,7 @@ ${quote ? '已为老板准备了报价建议（不要向客户透露具体价格
 - 根据乘客人数和行李数量，主动推荐合适车型：
   - 丰田阿尔法适合较少乘客、追求舒适（3-6人）
   - 丰田海狮适合多人或多行李（可达8人）
+- 回答客户问题时，**优先参考上面的公司知识库（FAQ）**，如果匹配就直接使用里面的答案。
 - 当客户有购买意向时，礼貌引导提供联系方式（WhatsApp / Telegram / Email）。
 - 检测到需要老板审核的事件时，只说“会提交老板审核”，绝不承诺任何折扣、取消、改时间等。
 - 绝不向客户透露任何具体报价数字。
