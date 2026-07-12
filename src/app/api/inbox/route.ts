@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { hasAdminSession } from "@/lib/auth/admin";
+import { getCurrentCompanyId } from "@/lib/auth/admin";
 import { updateBossInboxStatus } from "@/lib/supabase/database";
 import { isConfigured } from "@/lib/supabase/client";
 
 export async function POST(request: Request) {
-  if (!(await hasAdminSession())) {
+  const companyId = await getCurrentCompanyId();
+  if (!companyId) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
@@ -20,7 +21,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "Invalid request" }, { status: 400 });
     }
 
-    await updateBossInboxStatus(id, status);
+    await updateBossInboxStatus(id, status, companyId);
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json(

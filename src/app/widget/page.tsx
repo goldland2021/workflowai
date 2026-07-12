@@ -4,8 +4,11 @@ export const metadata = {
   title: "WorkflowAI Chat Widget",
 };
 
-export const dynamic = "force-static";
+interface WidgetPageProps {
+  searchParams: Promise<{ company?: string }>;
+}
 
-export default function WidgetPage() {
-  return <WidgetClient />;
+export default async function WidgetPage({ searchParams }: WidgetPageProps) {
+  const { company } = await searchParams;
+  return <WidgetClient companyId={company} />;
 }

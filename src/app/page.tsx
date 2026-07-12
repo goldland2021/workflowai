@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { hasAdminSession } from "@/lib/auth/admin";
+import { getCurrentCompanyId } from "@/lib/auth/admin";
 import { OwnerWorkspace } from "@/components/owner-workspace";
 import { getAIStatus } from "@/lib/ai/server-status";
 import { getDemoSnapshot } from "@/lib/domain/airport-transfer";
@@ -9,7 +9,8 @@ import { getBusinessConfig, getBossInboxItems } from "@/lib/supabase/database";
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  if (!(await hasAdminSession())) {
+  const companyId = await getCurrentCompanyId();
+  if (!companyId) {
     redirect("/login");
   }
   const aiStatus = getAIStatus();
@@ -19,8 +20,8 @@ export default async function Home() {
   if (hasDb) {
     try {
       // Try to load real data
-      const config = await getBusinessConfig();
-      const inboxItems = await getBossInboxItems("pending");
+      const config = await getBusinessConfig(companyId);
+      const inboxItems = await getBossInboxItems(companyId, "pending");
 
       if (config) {
         snapshot = {
@@ -64,7 +65,7 @@ export default async function Home() {
     }
   }
 
-  return <OwnerWorkspace snapshot={snapshot} aiStatus={aiStatus} />;
+  return <OwnerWorkspace snapshot={snapshot} aiStatus={aiStatus} companyId={companyId} />;
 }
 
 

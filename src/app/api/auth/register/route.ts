@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { z } from "zod";
 import { createSession, sessionCookieName } from "@/lib/auth/admin";
-import { UNUSABLE_PASSWORD_HASH, verifyPassword } from "@/lib/auth/password";
+import { hashPassword } from "@/lib/auth/password";
 import { isConfigured } from "@/lib/supabase/client";
-import { getCompanyByEmail } from "@/lib/supabase/database";
+import { createCompany, getCompanyByEmail } from "@/lib/supabase/database";
 
-const LoginRequestSchema = z.object({
+const RegisterRequestSchema = z.object({
+  companyName: z.string().trim().min(1).max(200),
   email: z.string().trim().toLowerCase().email().max(200),
-  password: z.string().min(1).max(200),
+  password: z.string().min(8).max(200),
 });
 
 export async function POST(request: Request) {
@@ -23,23 +24,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const parsed = LoginRequestSchema.safeParse(body);
+  const parsed = RegisterRequestSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ ok: false, error: "请输入邮箱和密码" }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "请填写完整的注册信息（密码至少8位）" }, { status: 400 });
   }
 
-  try {
-    const company = await getCompanyByEmail(parsed.data.email);
-    // Always run the hash comparison, even with no matching account, so a
-    // response's timing doesn't reveal whether the email is registered.
-    const validPassword = await verifyPassword(
-      parsed.data.password,
-      company?.password_hash ?? UNUSABLE_PASSWORD_HASH,
-    );
+  const { companyName, email, password } = parsed.data;
 
-    if (!company || !validPassword) {
-      return NextResponse.json({ ok: false, error: "邮箱或密码错误" }, { status: 401 });
+  try {
+    const existing = await getCompanyByEmail(email);
+    if (existing) {
+      return NextResponse.json({ ok: false, error: "该邮箱已注册" }, { status: 409 });
     }
+
+    const passwordHash = await hashPassword(password);
+    const company = await createCompany({ name: companyName, email, passwordHash });
 
     const token = createSession(company.id);
     const cookieStore = await cookies();

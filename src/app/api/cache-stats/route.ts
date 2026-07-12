@@ -1,19 +1,21 @@
 import { NextResponse } from "next/server";
 import { getCacheStats, clearCache } from "@/lib/ai/reply-cache";
-import { hasAdminSession } from "@/lib/auth/admin";
+import { getCurrentCompanyId } from "@/lib/auth/admin";
 
 export async function GET() {
-  if (!(await hasAdminSession())) {
+  const companyId = await getCurrentCompanyId();
+  if (!companyId) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
-  const stats = getCacheStats();
+  const stats = getCacheStats(companyId);
   return NextResponse.json(stats);
 }
 
 export async function DELETE() {
-  if (!(await hasAdminSession())) {
+  const companyId = await getCurrentCompanyId();
+  if (!companyId) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
-  clearCache();
+  clearCache(companyId);
   return NextResponse.json({ ok: true, message: "Cache cleared" });
 }

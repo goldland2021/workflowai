@@ -52,6 +52,7 @@ const STORAGE_KEY = "ai-employee-workspace-state-v1";
 interface OwnerWorkspaceProps {
   snapshot: DemoSnapshot;
   aiStatus: AIStatus;
+  companyId: string;
 }
 
 interface SavedWorkspaceState {
@@ -149,7 +150,7 @@ function readSavedWorkspace(): Partial<SavedWorkspaceState> {
   }
 }
 
-export function OwnerWorkspace({ snapshot, aiStatus }: OwnerWorkspaceProps) {
+export function OwnerWorkspace({ snapshot, aiStatus, companyId }: OwnerWorkspaceProps) {
   // Always start with snapshot values for SSR/hydration safety.
   // Load from localStorage in useEffect after mount to avoid mismatch.
   const [messages, setMessages] = useState<ConversationMessage[]>(snapshot.conversation);
@@ -197,6 +198,23 @@ export function OwnerWorkspace({ snapshot, aiStatus }: OwnerWorkspaceProps) {
 
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [saveConfigResult, setSaveConfigResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const [showEmbedSnippet, setShowEmbedSnippet] = useState(false);
+  const [embedCopied, setEmbedCopied] = useState(false);
+  const embedSnippet =
+    typeof window !== "undefined"
+      ? `<script src="${window.location.origin}/api/widget-embed?company=${companyId}"></script>`
+      : "";
+
+  async function copyEmbedSnippet() {
+    try {
+      await navigator.clipboard.writeText(embedSnippet);
+      setEmbedCopied(true);
+      setTimeout(() => setEmbedCopied(false), 2000);
+    } catch {
+      // Clipboard API unavailable; the snippet is still visible to copy manually.
+    }
+  }
 
   function resetSimulation() {
     if (typeof window !== 'undefined') {
@@ -769,8 +787,29 @@ ${updatedQuote.reason ? `说明：${updatedQuote.reason}` : ""}
             <Panel
               title="对话测试实验室"
               icon={<MessageSquareText size={18} aria-hidden="true" />}
-              action={<StatusPill label="网站挂件" />}
+              action={
+                <button onClick={() => setShowEmbedSnippet((v) => !v)} type="button">
+                  <StatusPill label="网站挂件" />
+                </button>
+              }
             >
+              {showEmbedSnippet && (
+                <div className="mb-4 rounded-lg border border-stone-300 bg-stone-50 p-3">
+                  <p className="mb-2 text-xs font-medium text-stone-600">
+                    把下面这段代码粘贴到你的网站 HTML 中，客服机器人就会出现在你的网站上：
+                  </p>
+                  <code className="block overflow-x-auto whitespace-pre rounded bg-stone-900 px-3 py-2 text-[11px] text-emerald-300">
+                    {embedSnippet}
+                  </code>
+                  <button
+                    onClick={copyEmbedSnippet}
+                    type="button"
+                    className="mt-2 rounded border border-stone-300 px-2 py-1 text-[10px] font-medium hover:bg-stone-100"
+                  >
+                    {embedCopied ? "已复制！" : "复制代码"}
+                  </button>
+                </div>
+              )}
               <div className="grid gap-4 2xl:grid-cols-[minmax(420px,1fr)_280px]">
                 <div className="flex min-h-[520px] min-w-0 flex-col rounded-lg border border-stone-300 bg-white">
                   <div className="flex items-center justify-between border-b border-stone-200 px-4 py-3">

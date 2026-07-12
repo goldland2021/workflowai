@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { hasAdminSession } from "@/lib/auth/admin";
+import { getCurrentCompanyId } from "@/lib/auth/admin";
 import { isConfigured } from "@/lib/supabase/client";
 import { saveBusinessConfig } from "@/lib/supabase/database";
 import { BusinessConfigurationSchema } from "@/lib/domain/schemas";
 
 export async function PUT(request: Request) {
-  if (!(await hasAdminSession())) {
+  const companyId = await getCurrentCompanyId();
+  if (!companyId) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
@@ -29,7 +30,7 @@ export async function PUT(request: Request) {
   }
 
   try {
-    await saveBusinessConfig(parsed.data);
+    await saveBusinessConfig(companyId, parsed.data);
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json(

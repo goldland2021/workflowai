@@ -21,6 +21,7 @@ export interface AnalyzeCustomerTurnRequest {
   businessConfiguration?: BusinessConfiguration; // allow teaching/editing config via UI
   sessionId?: string;       // browser session for persistence
   conversationId?: string;  // existing conversation to continue
+  companyId?: string;       // which company this conversation belongs to (widget visitors only; admin requests use the session's company)
 }
 
 export interface WorkflowResult {

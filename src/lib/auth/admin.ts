@@ -1,41 +1,44 @@
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
 
-export const adminSessionCookieName = "ai_employee_admin_session";
-const adminSessionMaxAgeMs = 1000 * 60 * 60 * 24;
+export const sessionCookieName = "ai_employee_session";
+const sessionMaxAgeMs = 1000 * 60 * 60 * 24;
 
-function getAdminSessionSecret(): string {
-  return process.env.ADMIN_SESSION_SECRET || process.env.ADMIN_PASSWORD || "workflowai-dev-session-secret";
+function getSessionSecret(): string {
+  return process.env.SESSION_SECRET || "workflowai-dev-session-secret";
 }
 
 function signSessionPayload(payload: string): string {
-  return createHmac("sha256", getAdminSessionSecret()).update(payload).digest("base64url");
+  return createHmac("sha256", getSessionSecret()).update(payload).digest("base64url");
 }
 
-export function createAdminSession(): string {
-  const payload = `${Date.now()}.${randomBytes(16).toString("hex")}`;
+export function createSession(companyId: string): string {
+  const payload = `${companyId}.${Date.now()}.${randomBytes(16).toString("hex")}`;
   return `${payload}.${signSessionPayload(payload)}`;
 }
 
-export function verifyAdminSession(token: string | undefined): boolean {
-  if (!token) return false;
+// Returns the company ID the token was issued for, or null if the token is
+// missing, malformed, tampered with, or expired.
+export function verifySession(token: string | undefined): string | null {
+  if (!token) return null;
   const parts = token.split(".");
-  if (parts.length !== 3) return false;
+  if (parts.length !== 4) return null;
 
-  const [createdAtText, nonce, signature] = parts;
+  const [companyId, createdAtText, nonce, signature] = parts;
   const createdAt = Number.parseInt(createdAtText, 10);
-  if (!Number.isFinite(createdAt) || !nonce) return false;
-  if (Date.now() - createdAt > adminSessionMaxAgeMs) return false;
+  if (!companyId || !Number.isFinite(createdAt) || !nonce) return null;
+  if (Date.now() - createdAt > sessionMaxAgeMs) return null;
 
-  const expected = signSessionPayload(`${createdAtText}.${nonce}`);
+  const expected = signSessionPayload(`${companyId}.${createdAtText}.${nonce}`);
   const actualBuffer = Buffer.from(signature);
   const expectedBuffer = Buffer.from(expected);
-  if (actualBuffer.length !== expectedBuffer.length) return false;
+  if (actualBuffer.length !== expectedBuffer.length) return null;
+  if (!timingSafeEqual(actualBuffer, expectedBuffer)) return null;
 
-  return timingSafeEqual(actualBuffer, expectedBuffer);
+  return companyId;
 }
 
-export async function hasAdminSession(): Promise<boolean> {
+export async function getCurrentCompanyId(): Promise<string | null> {
   const cookieStore = await cookies();
-  return verifyAdminSession(cookieStore.get(adminSessionCookieName)?.value);
+  return verifySession(cookieStore.get(sessionCookieName)?.value);
 }
