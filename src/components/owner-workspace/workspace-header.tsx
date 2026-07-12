@@ -8,6 +8,7 @@ import type { AIStatus } from "@/lib/ai/status-types";
 
 const NAV_ITEMS = [
   { href: "/", label: "老板收件箱" },
+  { href: "/dashboard", label: "仪表盘" },
   { href: "/train", label: "训练员工" },
   { href: "/test-lab", label: "对话测试实验室" },
 ];

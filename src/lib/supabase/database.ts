@@ -1,6 +1,6 @@
 import "server-only";
 import { supabaseFetch } from "./client";
-import type { BossInboxItem, BusinessConfiguration, ConversationMessage, TripDetails } from "@/lib/domain/types";
+import type { BossInboxItem, BusinessConfiguration, CapturedContact, ConversationMessage, TripDetails } from "@/lib/domain/types";
 
 // ─── Companies ───
 
@@ -92,6 +92,25 @@ export async function getConversationById(conversationId: string): Promise<Conve
   return data[0] ?? null;
 }
 
+export async function getConversationsSince(companyId: string, sinceIso: string): Promise<ConversationRow[]> {
+  const res = await supabaseFetch(
+    `/rest/v1/conversations?company_id=eq.${encodeURIComponent(companyId)}&created_at=gte.${encodeURIComponent(sinceIso)}&order=created_at.desc&limit=200`
+  );
+  return (await res.json()) as ConversationRow[];
+}
+
+export async function updateConversationContact(conversationId: string, contact: CapturedContact): Promise<void> {
+  await supabaseFetch(`/rest/v1/conversations?id=eq.${encodeURIComponent(conversationId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+    body: JSON.stringify({
+      contact_method: contact.method,
+      contact_value: contact.value,
+      updated_at: new Date().toISOString(),
+    }),
+  });
+}
+
 // ─── Messages ───
 
 export type MessageRow = {
@@ -142,6 +161,13 @@ export type BookingRow = {
   status: string | null;
   created_at: string;
 };
+
+export async function getRecentBookings(companyId: string, limit = 10): Promise<BookingRow[]> {
+  const res = await supabaseFetch(
+    `/rest/v1/bookings?company_id=eq.${encodeURIComponent(companyId)}&order=created_at.desc&limit=${limit}`
+  );
+  return (await res.json()) as BookingRow[];
+}
 
 export async function getBookingByConversationId(conversationId: string): Promise<BookingRow | null> {
   const res = await supabaseFetch(

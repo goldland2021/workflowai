@@ -20,6 +20,7 @@ import {
   getConversationBySessionId,
   getMessages,
   saveMessage,
+  updateConversationContact,
   upsertBooking,
 } from "@/lib/supabase/database";
 import { findCachedReply, cacheReply } from "@/lib/ai/reply-cache";
@@ -213,6 +214,14 @@ export async function POST(request: Request) {
       bookingId = await upsertBooking(conversationId, result.tripDetails, companyId);
     } catch (e) {
       console.warn("Failed to upsert booking draft to DB", e);
+    }
+
+    if (result.contact) {
+      try {
+        await updateConversationContact(conversationId, result.contact);
+      } catch (e) {
+        console.warn("Failed to persist captured contact", e);
+      }
     }
 
     if (result.bossInboxItems.length > 0) {
