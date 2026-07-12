@@ -10,16 +10,21 @@ import {
   MessageRoleSchema,
 } from "@/lib/domain/schemas";
 import type { ConversationMessage } from "@/lib/domain/types";
+import { getCurrentCompanyId } from "@/lib/auth/admin";
 import { isConfigured } from "@/lib/supabase/client";
 import {
   createBossInboxItem,
   createConversation,
+  getBusinessConfig,
+  getConversationById,
   getConversationBySessionId,
   getMessages,
   saveMessage,
+  updateConversationContact,
   upsertBooking,
 } from "@/lib/supabase/database";
 import { findCachedReply, cacheReply } from "@/lib/ai/reply-cache";
+import { checkRateLimit, getClientIp } from "@/lib/ai/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -53,11 +58,20 @@ const AnalyzeCustomerTurnRequestSchema = z.object({
   // ─── Persistence fields ───
   sessionId: z.string().optional(),
   conversationId: z.string().optional(),
+  // Which company this widget visitor belongs to. Ignored for authenticated
+  // admin requests, which are always scoped to the session's own company.
+  companyId: z.string().optional(),
+  // Test Lab preview turn - only honored for an authenticated admin session.
+  simulate: z.boolean().optional(),
 });
 
 type AnalyzeCustomerTurnPayload = z.infer<typeof AnalyzeCustomerTurnRequestSchema>;
 
 export async function POST(request: Request) {
+  if (!checkRateLimit(getClientIp(request))) {
+    return Response.json({ error: "Too many requests. Please slow down." }, { status: 429 });
+  }
+
   let body: unknown;
 
   try {
@@ -79,8 +93,25 @@ export async function POST(request: Request) {
 
   const payload: AnalyzeCustomerTurnPayload = parsed.data;
 
+  // An authenticated admin session always identifies its own company; a
+  // widget visitor has no session and must supply the company they belong to
+  // (the embed script bakes this in, see /api/widget-embed).
+  const sessionCompanyId = await getCurrentCompanyId();
+  const isAdmin = Boolean(sessionCompanyId);
+  const companyId = sessionCompanyId ?? payload.companyId;
+
+  if (!companyId) {
+    return Response.json({ error: "companyId is required." }, { status: 400 });
+  }
+
+  // The owner's Test Lab previews how the AI would behave without creating
+  // real conversations, bookings, or Boss Inbox items - and without polluting
+  // the cache with test replies. Only an admin session can request this.
+  const isSimulation = isAdmin && payload.simulate === true;
+
   // ─── 1. Database persistence ───
-  const hasDb = isConfigured();
+  const hasDb = isConfigured() && !isSimulation;
+  const canUseCache = !isSimulation;
   let conversationId: string | undefined = payload.conversationId;
   let createdNewConversation = false;
   const customerMessage: ConversationMessage = {
@@ -91,12 +122,26 @@ export async function POST(request: Request) {
     channel: "website_widget",
   };
 
+  if (hasDb && conversationId) {
+    try {
+      // A browser can replay any conversation ID it has seen. Verify the
+      // conversation belongs to this company before accepting a new message.
+      const conversation = await getConversationById(conversationId, companyId);
+      if (!conversation) {
+        return Response.json({ error: "Conversation not found." }, { status: 404 });
+      }
+    } catch (e) {
+      console.warn("Failed to verify conversation ownership", e);
+      return Response.json({ error: "Unable to verify conversation." }, { status: 503 });
+    }
+  }
+
   if (hasDb) {
     try {
       // Auto-create conversation if needed
       if (!conversationId) {
         const sessionId = payload.sessionId || `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        conversationId = await createConversation(sessionId);
+        conversationId = await createConversation(sessionId, companyId);
         createdNewConversation = true;
       }
 
@@ -108,8 +153,8 @@ export async function POST(request: Request) {
   }
 
   // ─── 2. Try cache after persistence so every turn keeps a history trail ───
-  if (payload.recentMessages?.length === 0 || !payload.recentMessages) {
-    const cached = findCachedReply(payload.message);
+  if (canUseCache && (payload.recentMessages?.length === 0 || !payload.recentMessages)) {
+    const cached = findCachedReply(companyId, payload.message);
     if (cached) {
       const aiMessage: ConversationMessage = {
         id: `cached_${Date.now()}`,
@@ -150,7 +195,15 @@ export async function POST(request: Request) {
     }),
   );
 
-  const configToUse = payload.businessConfiguration ?? airportTransferConfiguration;
+  // Only an authenticated admin session may override the business configuration
+  // for this request (used by the owner's Test Lab to preview unsaved edits).
+  // Anonymous widget visitors always get the persisted/default configuration —
+  // otherwise a visitor could submit their own pricing rules or behavior
+  // boundaries and have the AI reason from them.
+  const configToUse =
+    isAdmin && payload.businessConfiguration
+      ? payload.businessConfiguration
+      : (isConfigured() ? await getBusinessConfig(companyId) : null) ?? airportTransferConfiguration;
 
   const result = await analyzeCustomerTurn({
     message: payload.message,
@@ -172,9 +225,17 @@ export async function POST(request: Request) {
 
     let bookingId: string | undefined;
     try {
-      bookingId = await upsertBooking(conversationId, result.tripDetails);
+      bookingId = await upsertBooking(conversationId, result.tripDetails, companyId);
     } catch (e) {
       console.warn("Failed to upsert booking draft to DB", e);
+    }
+
+    if (result.contact) {
+      try {
+        await updateConversationContact(conversationId, companyId, result.contact);
+      } catch (e) {
+        console.warn("Failed to persist captured contact", e);
+      }
     }
 
     if (result.bossInboxItems.length > 0) {
@@ -185,6 +246,7 @@ export async function POST(request: Request) {
               ...item,
               bookingId,
               conversationId,
+              companyId,
             });
 
             return savedId ? { ...item, id: savedId } : item;
@@ -197,8 +259,8 @@ export async function POST(request: Request) {
   }
 
   // ─── 5. Cache the reply (only for simple turns without events) ───
-  if (result.detectedEvents.length === 0 && !result.contact && result.bossInboxItems.length === 0) {
-    cacheReply(payload.message, result.aiMessage.text);
+  if (canUseCache && result.detectedEvents.length === 0 && !result.contact && result.bossInboxItems.length === 0) {
+    cacheReply(companyId, payload.message, result.aiMessage.text);
   }
 
   return Response.json({
@@ -215,6 +277,13 @@ export async function GET(request: Request) {
   const sessionId = searchParams.get("sessionId");
   const conversationId = searchParams.get("conversationId");
 
+  const sessionCompanyId = await getCurrentCompanyId();
+  const companyId = sessionCompanyId ?? searchParams.get("companyId");
+
+  if (!companyId) {
+    return Response.json({ error: "companyId is required" }, { status: 400 });
+  }
+
   if (!conversationId && !sessionId) {
     return Response.json(
       { error: "Provide either conversationId or sessionId" },
@@ -227,14 +296,21 @@ export async function GET(request: Request) {
   }
 
   try {
-    // If we have a direct conversationId, load messages
+    // If we have a direct conversationId, verify it belongs to this company
+    // before returning anything — otherwise a visitor who guesses or replays
+    // another company's conversationId could read that company's messages.
     if (conversationId) {
+      const conversation = await getConversationById(conversationId, companyId);
+      if (!conversation) {
+        return Response.json({ messages: [], conversationId: null });
+      }
+
       const messages = await getMessages(conversationId);
       return Response.json({ messages, conversationId });
     }
 
     // Otherwise, look up the latest conversation for this browser session.
-    const match = sessionId ? await getConversationBySessionId(sessionId) : null;
+    const match = sessionId ? await getConversationBySessionId(sessionId, companyId) : null;
 
     if (!match) {
       return Response.json({ messages: [], conversationId: null });

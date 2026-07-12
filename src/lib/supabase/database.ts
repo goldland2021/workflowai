@@ -1,12 +1,50 @@
 import "server-only";
 import { supabaseFetch } from "./client";
-import type { BossInboxItem, BusinessConfiguration, ConversationMessage, TripDetails } from "@/lib/domain/types";
+import type { BossInboxItem, BusinessConfiguration, CapturedContact, ConversationMessage, TripDetails } from "@/lib/domain/types";
+
+// ─── Companies ───
+
+export type CompanyRow = {
+  id: string;
+  name: string;
+  email: string;
+  password_hash: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function createCompany(params: {
+  name: string;
+  email: string;
+  passwordHash: string;
+}): Promise<CompanyRow> {
+  const res = await supabaseFetch("/rest/v1/companies", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify({
+      name: params.name,
+      email: params.email.toLowerCase(),
+      password_hash: params.passwordHash,
+    }),
+  });
+  const data = (await res.json()) as CompanyRow[];
+  return data[0];
+}
+
+export async function getCompanyByEmail(email: string): Promise<CompanyRow | null> {
+  const res = await supabaseFetch(
+    `/rest/v1/companies?email=eq.${encodeURIComponent(email.toLowerCase())}&limit=1`
+  );
+  const data = (await res.json()) as CompanyRow[];
+  return data[0] ?? null;
+}
 
 // ─── Conversations ───
 
 export type ConversationRow = {
   id: string;
   session_id: string;
+  company_id: string | null;
   customer_name: string | null;
   contact_method: string | null;
   contact_value: string | null;
@@ -15,8 +53,8 @@ export type ConversationRow = {
   updated_at: string;
 };
 
-export async function createConversation(sessionId: string): Promise<string> {
-  const body = { session_id: sessionId, status: "active" };
+export async function createConversation(sessionId: string, companyId: string): Promise<string> {
+  const body = { session_id: sessionId, company_id: companyId, status: "active" };
   const res = await supabaseFetch("/rest/v1/conversations", {
     method: "POST",
     headers: { "Content-Type": "application/json", Prefer: "return=representation" },
@@ -26,19 +64,61 @@ export async function createConversation(sessionId: string): Promise<string> {
   return data[0]?.id ?? "";
 }
 
-export async function getConversations(limit = 20): Promise<ConversationRow[]> {
+export async function getConversations(companyId: string, limit = 20): Promise<ConversationRow[]> {
   const res = await supabaseFetch(
-    `/rest/v1/conversations?order=created_at.desc&limit=${limit}`
+    `/rest/v1/conversations?company_id=eq.${encodeURIComponent(companyId)}&order=created_at.desc&limit=${limit}`
   );
   return (await res.json()) as ConversationRow[];
 }
 
-export async function getConversationBySessionId(sessionId: string): Promise<ConversationRow | null> {
+export async function getConversationBySessionId(
+  sessionId: string,
+  companyId: string,
+): Promise<ConversationRow | null> {
   const res = await supabaseFetch(
-    `/rest/v1/conversations?session_id=eq.${encodeURIComponent(sessionId)}&order=created_at.desc&limit=1`
+    `/rest/v1/conversations?session_id=eq.${encodeURIComponent(sessionId)}&company_id=eq.${encodeURIComponent(companyId)}&order=created_at.desc&limit=1`
   );
   const data = (await res.json()) as ConversationRow[];
   return data[0] ?? null;
+}
+
+// Used to check ownership before returning data scoped to a raw conversationId
+// supplied by a caller (e.g. a widget visitor's saved localStorage value).
+export async function getConversationById(
+  conversationId: string,
+  companyId: string,
+): Promise<ConversationRow | null> {
+  const res = await supabaseFetch(
+    `/rest/v1/conversations?id=eq.${encodeURIComponent(conversationId)}&company_id=eq.${encodeURIComponent(companyId)}&limit=1`
+  );
+  const data = (await res.json()) as ConversationRow[];
+  return data[0] ?? null;
+}
+
+export async function getConversationsSince(companyId: string, sinceIso: string): Promise<ConversationRow[]> {
+  const res = await supabaseFetch(
+    `/rest/v1/conversations?company_id=eq.${encodeURIComponent(companyId)}&created_at=gte.${encodeURIComponent(sinceIso)}&order=created_at.desc&limit=200`
+  );
+  return (await res.json()) as ConversationRow[];
+}
+
+export async function updateConversationContact(
+  conversationId: string,
+  companyId: string,
+  contact: CapturedContact,
+): Promise<void> {
+  await supabaseFetch(
+    `/rest/v1/conversations?id=eq.${encodeURIComponent(conversationId)}&company_id=eq.${encodeURIComponent(companyId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({
+        contact_method: contact.method,
+        contact_value: contact.value,
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
 }
 
 // ─── Messages ───
@@ -77,6 +157,7 @@ export async function getMessages(conversationId: string): Promise<MessageRow[]>
 export type BookingRow = {
   id: string;
   conversation_id: string | null;
+  company_id: string | null;
   service_type: string | null;
   pickup_location: string | null;
   dropoff_location: string | null;
@@ -91,9 +172,19 @@ export type BookingRow = {
   created_at: string;
 };
 
-export async function getBookingByConversationId(conversationId: string): Promise<BookingRow | null> {
+export async function getRecentBookings(companyId: string, limit = 10): Promise<BookingRow[]> {
   const res = await supabaseFetch(
-    `/rest/v1/bookings?conversation_id=eq.${encodeURIComponent(conversationId)}&order=created_at.desc&limit=1`
+    `/rest/v1/bookings?company_id=eq.${encodeURIComponent(companyId)}&order=created_at.desc&limit=${limit}`
+  );
+  return (await res.json()) as BookingRow[];
+}
+
+export async function getBookingByConversationId(
+  conversationId: string,
+  companyId: string,
+): Promise<BookingRow | null> {
+  const res = await supabaseFetch(
+    `/rest/v1/bookings?conversation_id=eq.${encodeURIComponent(conversationId)}&company_id=eq.${encodeURIComponent(companyId)}&order=created_at.desc&limit=1`
   );
   const data = (await res.json()) as BookingRow[];
   return data[0] ?? null;
@@ -102,10 +193,12 @@ export async function getBookingByConversationId(conversationId: string): Promis
 export async function upsertBooking(
   conversationId: string,
   tripDetails: TripDetails,
+  companyId: string,
   existingBookingId?: string
 ): Promise<string> {
   const body: Record<string, unknown> = {
     conversation_id: conversationId,
+    company_id: companyId,
     service_type: tripDetails.serviceType,
     pickup_location: tripDetails.pickupLocation,
     dropoff_location: tripDetails.dropoffLocation,
@@ -122,11 +215,11 @@ export async function upsertBooking(
     estimated_drive_time_min: tripDetails.estimatedDriveTimeMinutes,
   };
 
-  const bookingId = existingBookingId ?? (await getBookingByConversationId(conversationId))?.id;
+  const bookingId = existingBookingId ?? (await getBookingByConversationId(conversationId, companyId))?.id;
 
   if (bookingId) {
     await supabaseFetch(
-      `/rest/v1/bookings?id=eq.${encodeURIComponent(bookingId)}`,
+      `/rest/v1/bookings?id=eq.${encodeURIComponent(bookingId)}&company_id=eq.${encodeURIComponent(companyId)}`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
@@ -151,6 +244,7 @@ export type BossInboxRow = {
   id: string;
   conversation_id: string | null;
   booking_id: string | null;
+  company_id: string | null;
   type: string;
   status: string;
   customer_name: string | null;
@@ -168,11 +262,12 @@ export type BossInboxRow = {
 };
 
 export async function createBossInboxItem(
-  item: Partial<BossInboxItem> & { bookingId?: string; conversationId: string },
+  item: Partial<BossInboxItem> & { bookingId?: string; conversationId: string; companyId: string },
 ): Promise<string> {
   const body: Record<string, unknown> = {
     conversation_id: item.conversationId,
     booking_id: item.bookingId,
+    company_id: item.companyId,
     type: item.type,
     status: item.status || "pending",
     customer_name: item.customerName,
@@ -197,8 +292,8 @@ export async function createBossInboxItem(
   return data[0]?.id ?? "";
 }
 
-export async function getBossInboxItems(status?: string): Promise<BossInboxRow[]> {
-  let path = "/rest/v1/boss_inbox?order=created_at.desc&limit=50";
+export async function getBossInboxItems(companyId: string, status?: string): Promise<BossInboxRow[]> {
+  let path = `/rest/v1/boss_inbox?company_id=eq.${encodeURIComponent(companyId)}&order=created_at.desc&limit=50`;
   if (status) path += `&status=eq.${status}`;
   const res = await supabaseFetch(path);
   return (await res.json()) as BossInboxRow[];
@@ -206,33 +301,39 @@ export async function getBossInboxItems(status?: string): Promise<BossInboxRow[]
 
 export async function updateBossInboxStatus(
   id: string,
-  status: "approved" | "edited" | "rejected"
+  status: "approved" | "edited" | "rejected",
+  companyId: string,
 ): Promise<void> {
-  await supabaseFetch(`/rest/v1/boss_inbox?id=eq.${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-    body: JSON.stringify({ status, updated_at: new Date().toISOString() }),
-  });
+  await supabaseFetch(
+    `/rest/v1/boss_inbox?id=eq.${encodeURIComponent(id)}&company_id=eq.${encodeURIComponent(companyId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ status, updated_at: new Date().toISOString() }),
+    },
+  );
 }
 
 // ─── Business Config ───
 
-export async function getBusinessConfig(): Promise<BusinessConfiguration | null> {
+export async function getBusinessConfig(companyId: string): Promise<BusinessConfiguration | null> {
   try {
-    const res = await supabaseFetch("/rest/v1/business_config?id=eq.default&limit=1");
-    const rows = (await res.json()) as Array<{ id: string; config: BusinessConfiguration }>;
+    const res = await supabaseFetch(
+      `/rest/v1/business_config?company_id=eq.${encodeURIComponent(companyId)}&limit=1`
+    );
+    const rows = (await res.json()) as Array<{ company_id: string; config: BusinessConfiguration }>;
     return rows[0]?.config ?? null;
   } catch {
     return null;
   }
 }
 
-export async function saveBusinessConfig(config: BusinessConfiguration): Promise<void> {
-  await supabaseFetch("/rest/v1/business_config", {
+export async function saveBusinessConfig(companyId: string, config: BusinessConfiguration): Promise<void> {
+  await supabaseFetch("/rest/v1/business_config?on_conflict=company_id", {
     method: "POST",
     headers: { "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" },
     body: JSON.stringify({
-      id: "default",
+      company_id: companyId,
       company_name: config.companyProfile.name,
       config,
       updated_at: new Date().toISOString(),

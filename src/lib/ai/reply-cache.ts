@@ -3,8 +3,10 @@ import "server-only";
 // ─── Types ───
 
 export interface CacheEntry {
-  /** Normalized message (used as key) */
+  /** Normalized message (used for similarity matching) */
   key: string;
+  /** Which company this cached reply belongs to */
+  companyId: string;
   /** The cached AI reply text */
   reply: string;
   /** When this entry was created */
@@ -20,8 +22,14 @@ const SIMILARITY_THRESHOLD = 0.65; // 65% similarity required for cache hit
 const CACHE_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
 
 // ─── In-memory store ───
+// Map key is `${companyId}::${normalizedMessage}` so replies (which embed a
+// company's own pricing, vehicles, and knowledge) never leak across tenants.
 
 const store = new Map<string, CacheEntry>();
+
+function mapKey(companyId: string, normalizedMessage: string): string {
+  return `${companyId}::${normalizedMessage}`;
+}
 
 // ─── Text Normalization ───
 
@@ -90,33 +98,35 @@ function evictIfNeeded(): void {
 // ─── Public API ───
 
 /**
- * Find a cached reply for a similar message.
+ * Find a cached reply for a similar message, scoped to one company.
  * Returns undefined if no match found.
  */
-export function findCachedReply(message: string): string | undefined {
+export function findCachedReply(companyId: string, message: string): string | undefined {
   const now = Date.now();
   const tokens = tokenize(message);
-  let bestMatch: { key: string; similarity: number } | undefined;
+  let bestMatch: { mapKey: string; similarity: number } | undefined;
 
   for (const [key, entry] of store) {
+    if (entry.companyId !== companyId) continue;
+
     // Check TTL
     if (now - entry.createdAt > CACHE_TTL_MS) {
       store.delete(key);
       continue;
     }
 
-    const keyTokens = tokenize(key);
+    const keyTokens = tokenize(entry.key);
     const similarity = jaccardSimilarity(tokens, keyTokens);
 
     if (similarity >= SIMILARITY_THRESHOLD && (!bestMatch || similarity > bestMatch.similarity)) {
-      bestMatch = { key, similarity };
+      bestMatch = { mapKey: key, similarity };
     }
   }
 
   if (bestMatch) {
-    const entry = store.get(bestMatch.key)!;
+    const entry = store.get(bestMatch.mapKey)!;
     entry.hits++;
-    console.log(`[Cache HIT] similarity=${bestMatch.similarity.toFixed(2)} key="${bestMatch.key.slice(0, 40)}..." hits=${entry.hits}`);
+    console.log(`[Cache HIT] similarity=${bestMatch.similarity.toFixed(2)} key="${bestMatch.mapKey.slice(0, 40)}..." hits=${entry.hits}`);
     return entry.reply;
   }
 
@@ -124,16 +134,17 @@ export function findCachedReply(message: string): string | undefined {
 }
 
 /**
- * Store a reply in the cache.
+ * Store a reply in the cache, scoped to one company.
  */
-export function cacheReply(message: string, reply: string): void {
+export function cacheReply(companyId: string, message: string, reply: string): void {
   const key = normalize(message);
   if (!key) return; // Don't cache empty messages
 
   evictIfNeeded();
 
-  store.set(key, {
+  store.set(mapKey(companyId, key), {
     key,
+    companyId,
     reply,
     createdAt: Date.now(),
     hits: 0,
@@ -141,14 +152,16 @@ export function cacheReply(message: string, reply: string): void {
 }
 
 /**
- * Get cache statistics (for debugging/admin).
+ * Get cache statistics for one company (for debugging/admin).
  */
-export function getCacheStats(): { size: number; hits: number; entries: Array<{ key: string; hits: number; age: number }> } {
+export function getCacheStats(companyId: string): { size: number; hits: number; entries: Array<{ key: string; hits: number; age: number }> } {
   const now = Date.now();
   let totalHits = 0;
   const entries: Array<{ key: string; hits: number; age: number }> = [];
 
   for (const [, entry] of store) {
+    if (entry.companyId !== companyId) continue;
+
     totalHits += entry.hits;
     entries.push({
       key: entry.key.slice(0, 50),
@@ -159,12 +172,14 @@ export function getCacheStats(): { size: number; hits: number; entries: Array<{ 
 
   entries.sort((a, b) => b.hits - a.hits);
 
-  return { size: store.size, hits: totalHits, entries: entries.slice(0, 20) };
+  return { size: entries.length, hits: totalHits, entries: entries.slice(0, 20) };
 }
 
 /**
- * Clear the entire cache.
+ * Clear only one company's cached replies.
  */
-export function clearCache(): void {
-  store.clear();
+export function clearCache(companyId: string): void {
+  for (const [key, entry] of store) {
+    if (entry.companyId === companyId) store.delete(key);
+  }
 }

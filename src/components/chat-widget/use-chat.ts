@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { ConversationMessage } from "@/lib/domain/types";
 import { analyzeCustomerTurnOnServer, loadConversationHistory } from "@/lib/client/ai-workflow-api";
-import { airportTransferConfiguration } from "@/lib/domain/airport-transfer";
 
 export interface ChatMessage {
   id: string;
@@ -53,7 +52,7 @@ function createWelcomeMessage(): ChatMessage {
   };
 }
 
-export function useChat(apiEndpoint?: string, defaultOpen = false): UseChatReturn {
+export function useChat(companyId: string | undefined, apiEndpoint?: string, defaultOpen = false): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([createWelcomeMessage()]);
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [isTyping, setIsTyping] = useState(false);
@@ -67,7 +66,7 @@ export function useChat(apiEndpoint?: string, defaultOpen = false): UseChatRetur
     const cid = getConversationId();
     if (!cid) return;
 
-    loadConversationHistory({ conversationId: cid }, apiEndpoint).then((data) => {
+    loadConversationHistory({ conversationId: cid, companyId }, apiEndpoint).then((data) => {
       if (data.messages.length > 0) {
         const history: ChatMessage[] = data.messages.map((m) => ({
           id: m.id,
@@ -78,7 +77,7 @@ export function useChat(apiEndpoint?: string, defaultOpen = false): UseChatRetur
         setMessages(history);
       }
     }).catch(() => {});
-  }, [apiEndpoint]);
+  }, [apiEndpoint, companyId]);
 
   const toggleOpen = useCallback(() => setIsOpen((p) => !p), []);
   const clearError = useCallback(() => setError(null), []);
@@ -119,9 +118,9 @@ export function useChat(apiEndpoint?: string, defaultOpen = false): UseChatRetur
           currentTripDetails: {},
           existingBossItems: [],
           recentMessages: recentMessages.length > 0 ? recentMessages : undefined,
-          businessConfiguration: airportTransferConfiguration,
           sessionId,
           conversationId: conversationId || undefined,
+          companyId,
         },
         apiEndpoint,
       );
@@ -149,7 +148,7 @@ export function useChat(apiEndpoint?: string, defaultOpen = false): UseChatRetur
     } finally {
       setIsTyping(false);
     }
-  }, [apiEndpoint, messages, isTyping]);
+  }, [apiEndpoint, messages, isTyping, companyId]);
 
   return { messages, isOpen, isTyping, error, toggleOpen, sendMessage, clearError };
 }

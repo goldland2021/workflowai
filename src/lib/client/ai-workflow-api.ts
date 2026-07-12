@@ -30,10 +30,12 @@ export async function analyzeCustomerTurnOnServer(
 export async function loadConversationHistory(params: {
   sessionId?: string;
   conversationId?: string;
+  companyId?: string;
 }, apiBaseUrl?: string): Promise<{ messages: Array<{ id: string; role: string; text: string; created_at: string }>; conversationId: string | null }> {
   const query = new URLSearchParams();
   if (params.sessionId) query.set("sessionId", params.sessionId);
   if (params.conversationId) query.set("conversationId", params.conversationId);
+  if (params.companyId) query.set("companyId", params.companyId);
 
   if (!query.toString()) {
     return { messages: [], conversationId: null };

@@ -7,6 +7,10 @@ const ChatWidget = dynamic(
   { ssr: false },
 );
 
-export default function WidgetClient() {
-  return <ChatWidget defaultOpen />;
+interface WidgetClientProps {
+  companyId?: string;
+}
+
+export default function WidgetClient({ companyId }: WidgetClientProps) {
+  return <ChatWidget companyId={companyId} defaultOpen />;
 }

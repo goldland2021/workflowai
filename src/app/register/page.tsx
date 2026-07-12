@@ -3,7 +3,8 @@ import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-export default function LoginPage() {
+export default function RegisterPage() {
+  const [companyName, setCompanyName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -16,10 +17,10 @@ export default function LoginPage() {
     setSubmitting(true);
 
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ companyName, email, password }),
       });
 
       if (res.ok) {
@@ -28,9 +29,9 @@ export default function LoginPage() {
       }
 
       const data = await res.json().catch(() => null);
-      setError(data?.error ?? "登录失败");
+      setError(data?.error ?? "注册失败");
     } catch {
-      setError("登录失败，请检查网络后重试。");
+      setError("注册失败，请检查网络后重试。");
     } finally {
       setSubmitting(false);
     }
@@ -39,24 +40,35 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#f7f5ef] p-4">
       <form onSubmit={handleSubmit} className="w-full max-w-sm rounded-lg border border-stone-300 bg-white p-6 shadow-sm">
-        <h1 className="mb-6 text-xl font-semibold text-stone-900">AI 员工后台</h1>
+        <h1 className="mb-6 text-xl font-semibold text-stone-900">注册 AI 员工账号</h1>
         <label className="grid gap-2 text-sm font-medium text-stone-700">
-          邮箱
+          公司名称
           <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            type="text"
+            value={companyName}
+            onChange={(e) => setCompanyName(e.target.value)}
             className="h-10 rounded-md border border-stone-300 px-3 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
             autoFocus
             required
           />
         </label>
         <label className="mt-4 grid gap-2 text-sm font-medium text-stone-700">
-          密码
+          邮箱
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="h-10 rounded-md border border-stone-300 px-3 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
+            required
+          />
+        </label>
+        <label className="mt-4 grid gap-2 text-sm font-medium text-stone-700">
+          密码（至少 8 位）
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            minLength={8}
             className="h-10 rounded-md border border-stone-300 px-3 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
             required
           />
@@ -67,12 +79,12 @@ export default function LoginPage() {
           disabled={submitting}
           className="mt-4 h-10 w-full rounded-md bg-stone-900 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:opacity-50"
         >
-          {submitting ? "登录中…" : "登录"}
+          {submitting ? "创建中…" : "创建账号"}
         </button>
         <p className="mt-4 text-center text-sm text-stone-500">
-          还没有账号？{" "}
-          <Link href="/register" className="font-medium text-emerald-700 hover:underline">
-            注册公司账号
+          已有账号？{" "}
+          <Link href="/login" className="font-medium text-emerald-700 hover:underline">
+            去登录
           </Link>
         </p>
       </form>
