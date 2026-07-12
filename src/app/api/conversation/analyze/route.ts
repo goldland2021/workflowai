@@ -20,6 +20,7 @@ import {
   upsertBooking,
 } from "@/lib/supabase/database";
 import { findCachedReply, cacheReply } from "@/lib/ai/reply-cache";
+import { checkRateLimit, getClientIp } from "@/lib/ai/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -58,6 +59,10 @@ const AnalyzeCustomerTurnRequestSchema = z.object({
 type AnalyzeCustomerTurnPayload = z.infer<typeof AnalyzeCustomerTurnRequestSchema>;
 
 export async function POST(request: Request) {
+  if (!checkRateLimit(getClientIp(request))) {
+    return Response.json({ error: "Too many requests. Please slow down." }, { status: 429 });
+  }
+
   let body: unknown;
 
   try {
