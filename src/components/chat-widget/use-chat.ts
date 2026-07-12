@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { ConversationMessage } from "@/lib/domain/types";
 import { analyzeCustomerTurnOnServer, loadConversationHistory } from "@/lib/client/ai-workflow-api";
-import { airportTransferConfiguration } from "@/lib/domain/airport-transfer";
 
 export interface ChatMessage {
   id: string;
@@ -119,7 +118,6 @@ export function useChat(apiEndpoint?: string, defaultOpen = false): UseChatRetur
           currentTripDetails: {},
           existingBossItems: [],
           recentMessages: recentMessages.length > 0 ? recentMessages : undefined,
-          businessConfiguration: airportTransferConfiguration,
           sessionId,
           conversationId: conversationId || undefined,
         },

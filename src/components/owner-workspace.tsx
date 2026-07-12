@@ -195,6 +195,9 @@ export function OwnerWorkspace({ snapshot, aiStatus }: OwnerWorkspaceProps) {
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editQuote, setEditQuote] = useState<Partial<QuoteSuggestion>>({});
 
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
+  const [saveConfigResult, setSaveConfigResult] = useState<{ ok: boolean; message: string } | null>(null);
+
   function resetSimulation() {
     if (typeof window !== 'undefined') {
       localStorage.removeItem(STORAGE_KEY);
@@ -523,6 +526,30 @@ ${updatedQuote.reason ? `说明：${updatedQuote.reason}` : ""}
     }));
   }
 
+  async function publishBusinessConfig() {
+    setIsSavingConfig(true);
+    setSaveConfigResult(null);
+
+    try {
+      const res = await fetch("/api/business-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(businessConfig),
+      });
+      const data = await res.json().catch(() => null);
+
+      if (res.ok) {
+        setSaveConfigResult({ ok: true, message: "已保存，客服机器人将立即使用新配置。" });
+      } else {
+        setSaveConfigResult({ ok: false, message: data?.error ?? `保存失败（${res.status}）` });
+      }
+    } catch {
+      setSaveConfigResult({ ok: false, message: "保存失败，请检查网络后重试。" });
+    } finally {
+      setIsSavingConfig(false);
+    }
+  }
+
   function updateDriverDetail(field: keyof DriverDetails, value: string) {
     setDriverDetails((current) => ({
       ...current,
@@ -604,7 +631,26 @@ ${updatedQuote.reason ? `说明：${updatedQuote.reason}` : ""}
                       </span>
                     ))}
                   </div>
-                  <p className="text-[10px] text-emerald-700 mt-2">提示：修改上方公司信息、车型、知识库后，AI会立即使用新知识回复。</p>
+                  <p className="text-[10px] text-stone-500 mt-2">
+                    提示：修改上方公司信息、车型、知识库后，可在下方对话区先测试效果；点击“保存并发布”后，网站客服机器人才会使用新配置。
+                  </p>
+                </div>
+
+                <div>
+                  <button
+                    onClick={publishBusinessConfig}
+                    disabled={isSavingConfig}
+                    className="w-full rounded border border-emerald-700 bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isSavingConfig ? "保存中…" : "保存并发布到线上客服"}
+                  </button>
+                  {saveConfigResult && (
+                    <p
+                      className={`mt-1 text-[10px] ${saveConfigResult.ok ? "text-emerald-700" : "text-rose-600"}`}
+                    >
+                      {saveConfigResult.message}
+                    </p>
+                  )}
                 </div>
 
                 {/* 可用车型 - 可编辑，用于教AI */}
@@ -684,7 +730,7 @@ ${updatedQuote.reason ? `说明：${updatedQuote.reason}` : ""}
               </div>
             </Panel>
 
-            <Panel title="公司知识库（编辑后AI会立即使用）" icon={<ShieldCheck size={18} aria-hidden="true" />}>
+            <Panel title="公司知识库（保存后AI才会使用）" icon={<ShieldCheck size={18} aria-hidden="true" />}>
               <div className="space-y-3">
                 {businessConfig.faq.map((item, idx) => (
                   <div key={idx} className="border-b border-stone-200 pb-3 last:border-0 last:pb-0 space-y-1">

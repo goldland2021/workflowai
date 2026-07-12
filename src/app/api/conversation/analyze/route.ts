@@ -10,10 +10,12 @@ import {
   MessageRoleSchema,
 } from "@/lib/domain/schemas";
 import type { ConversationMessage } from "@/lib/domain/types";
+import { hasAdminSession } from "@/lib/auth/admin";
 import { isConfigured } from "@/lib/supabase/client";
 import {
   createBossInboxItem,
   createConversation,
+  getBusinessConfig,
   getConversationBySessionId,
   getMessages,
   saveMessage,
@@ -155,7 +157,16 @@ export async function POST(request: Request) {
     }),
   );
 
-  const configToUse = payload.businessConfiguration ?? airportTransferConfiguration;
+  // Only an authenticated admin session may override the business configuration
+  // for this request (used by the owner's Test Lab to preview unsaved edits).
+  // Anonymous widget visitors always get the persisted/default configuration —
+  // otherwise a visitor could submit their own pricing rules or behavior
+  // boundaries and have the AI reason from them.
+  const isAdmin = await hasAdminSession();
+  const configToUse =
+    isAdmin && payload.businessConfiguration
+      ? payload.businessConfiguration
+      : (hasDb ? await getBusinessConfig() : null) ?? airportTransferConfiguration;
 
   const result = await analyzeCustomerTurn({
     message: payload.message,
