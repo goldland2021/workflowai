@@ -4,7 +4,8 @@ import { OwnerWorkspace } from "@/components/owner-workspace";
 import { getAIStatus } from "@/lib/ai/server-status";
 import { getDemoSnapshot } from "@/lib/domain/airport-transfer";
 import { isConfigured } from "@/lib/supabase/client";
-import { getBusinessConfig, getBossInboxItems } from "@/lib/supabase/database";
+import { getBossInboxItems } from "@/lib/supabase/database";
+import type { BossInboxItem } from "@/lib/domain/types";
 
 export const dynamic = "force-dynamic";
 
@@ -13,51 +14,40 @@ export default async function Home() {
   if (!companyId) {
     redirect("/login");
   }
-  const aiStatus = getAIStatus();
-  const hasDb = isConfigured();
-  let snapshot = getDemoSnapshot();
 
-  if (hasDb) {
+  const aiStatus = getAIStatus();
+  const demo = getDemoSnapshot();
+  let bossInbox: BossInboxItem[] = demo.bossInbox;
+
+  if (isConfigured()) {
     try {
-      // Try to load real data
-      const config = await getBusinessConfig(companyId);
       const inboxItems = await getBossInboxItems(companyId, "pending");
 
-      if (config) {
-        snapshot = {
-          ...snapshot,
-          businessConfiguration: config,
-        };
-      }
-
       if (inboxItems.length > 0) {
-        snapshot = {
-          ...snapshot,
-          bossInbox: inboxItems.map((item) => ({
-            id: item.id,
-            type: item.type as never,
-            status: item.status as never,
-            customerName: item.customer_name ?? "",
-            summary: item.summary ?? "",
-            recommendation: item.recommendation ?? "",
-            reason: item.reason ?? "",
-            confidence: item.confidence ?? 0,
-            decisionType: item.decision_type ?? "",
-            createdAt: item.created_at,
-            quote: item.suggested_price
-              ? {
-                  id: `quote_${item.id}`,
-                  suggestedPrice: item.suggested_price,
-                  currency: item.currency ?? "USD",
-                  vehicleType: item.vehicle_type ?? undefined,
-                  reason: item.reason ?? "",
-                  confidence: item.confidence ?? 75,
-                  missingFields: [],
-                  includedFees: ["Tolls", "Parking fees", "Taxes"],
-                }
-              : undefined,
-          })),
-        };
+        bossInbox = inboxItems.map((item) => ({
+          id: item.id,
+          type: item.type as never,
+          status: item.status as never,
+          customerName: item.customer_name ?? "",
+          summary: item.summary ?? "",
+          recommendation: item.recommendation ?? "",
+          reason: item.reason ?? "",
+          confidence: item.confidence ?? 0,
+          decisionType: item.decision_type ?? "",
+          createdAt: item.created_at,
+          quote: item.suggested_price
+            ? {
+                id: `quote_${item.id}`,
+                suggestedPrice: item.suggested_price,
+                currency: item.currency ?? "USD",
+                vehicleType: item.vehicle_type ?? undefined,
+                reason: item.reason ?? "",
+                confidence: item.confidence ?? 75,
+                missingFields: [],
+                includedFees: ["Tolls", "Parking fees", "Taxes"],
+              }
+            : undefined,
+        }));
       }
     } catch {
       // DB available but tables not ready yet - fallback gracefully
@@ -65,7 +55,13 @@ export default async function Home() {
     }
   }
 
-  return <OwnerWorkspace snapshot={snapshot} aiStatus={aiStatus} companyId={companyId} />;
+  return (
+    <OwnerWorkspace
+      bossInbox={bossInbox}
+      tripDetails={demo.tripDetails}
+      contact={demo.contact}
+      bookingSummary={demo.bookingSummary}
+      aiStatus={aiStatus}
+    />
+  );
 }
-
-

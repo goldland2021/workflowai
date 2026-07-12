@@ -60,6 +60,8 @@ const AnalyzeCustomerTurnRequestSchema = z.object({
   // Which company this widget visitor belongs to. Ignored for authenticated
   // admin requests, which are always scoped to the session's own company.
   companyId: z.string().optional(),
+  // Test Lab preview turn - only honored for an authenticated admin session.
+  simulate: z.boolean().optional(),
 });
 
 type AnalyzeCustomerTurnPayload = z.infer<typeof AnalyzeCustomerTurnRequestSchema>;
@@ -101,8 +103,14 @@ export async function POST(request: Request) {
     return Response.json({ error: "companyId is required." }, { status: 400 });
   }
 
+  // The owner's Test Lab previews how the AI would behave without creating
+  // real conversations, bookings, or Boss Inbox items - and without polluting
+  // the cache with test replies. Only an admin session can request this.
+  const isSimulation = isAdmin && payload.simulate === true;
+
   // ─── 1. Database persistence ───
-  const hasDb = isConfigured();
+  const hasDb = isConfigured() && !isSimulation;
+  const canUseCache = !isSimulation;
   let conversationId: string | undefined = payload.conversationId;
   let createdNewConversation = false;
   const customerMessage: ConversationMessage = {
@@ -130,7 +138,7 @@ export async function POST(request: Request) {
   }
 
   // ─── 2. Try cache after persistence so every turn keeps a history trail ───
-  if (payload.recentMessages?.length === 0 || !payload.recentMessages) {
+  if (canUseCache && (payload.recentMessages?.length === 0 || !payload.recentMessages)) {
     const cached = findCachedReply(companyId, payload.message);
     if (cached) {
       const aiMessage: ConversationMessage = {
@@ -180,7 +188,7 @@ export async function POST(request: Request) {
   const configToUse =
     isAdmin && payload.businessConfiguration
       ? payload.businessConfiguration
-      : (hasDb ? await getBusinessConfig(companyId) : null) ?? airportTransferConfiguration;
+      : (isConfigured() ? await getBusinessConfig(companyId) : null) ?? airportTransferConfiguration;
 
   const result = await analyzeCustomerTurn({
     message: payload.message,
@@ -228,7 +236,7 @@ export async function POST(request: Request) {
   }
 
   // ─── 5. Cache the reply (only for simple turns without events) ───
-  if (result.detectedEvents.length === 0 && !result.contact && result.bossInboxItems.length === 0) {
+  if (canUseCache && result.detectedEvents.length === 0 && !result.contact && result.bossInboxItems.length === 0) {
     cacheReply(companyId, payload.message, result.aiMessage.text);
   }
 
