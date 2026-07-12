@@ -19,7 +19,7 @@ ALTER TABLE business_config ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES 
 -- every install. Under multi-tenancy each company needs its own row, so the
 -- id column must generate a fresh value per insert instead of the same
 -- literal every time.
-ALTER TABLE business_config ALTER COLUMN id SET DEFAULT gen_random_uuid();
+ALTER TABLE business_config ALTER COLUMN id SET DEFAULT (gen_random_uuid()::text);
 
 CREATE INDEX IF NOT EXISTS idx_conversations_company ON conversations(company_id);
 CREATE INDEX IF NOT EXISTS idx_bookings_company ON bookings(company_id);

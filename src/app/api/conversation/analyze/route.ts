@@ -122,6 +122,20 @@ export async function POST(request: Request) {
     channel: "website_widget",
   };
 
+  if (hasDb && conversationId) {
+    try {
+      // A browser can replay any conversation ID it has seen. Verify the
+      // conversation belongs to this company before accepting a new message.
+      const conversation = await getConversationById(conversationId, companyId);
+      if (!conversation) {
+        return Response.json({ error: "Conversation not found." }, { status: 404 });
+      }
+    } catch (e) {
+      console.warn("Failed to verify conversation ownership", e);
+      return Response.json({ error: "Unable to verify conversation." }, { status: 503 });
+    }
+  }
+
   if (hasDb) {
     try {
       // Auto-create conversation if needed
@@ -218,7 +232,7 @@ export async function POST(request: Request) {
 
     if (result.contact) {
       try {
-        await updateConversationContact(conversationId, result.contact);
+        await updateConversationContact(conversationId, companyId, result.contact);
       } catch (e) {
         console.warn("Failed to persist captured contact", e);
       }
@@ -286,8 +300,8 @@ export async function GET(request: Request) {
     // before returning anything — otherwise a visitor who guesses or replays
     // another company's conversationId could read that company's messages.
     if (conversationId) {
-      const conversation = await getConversationById(conversationId);
-      if (!conversation || conversation.company_id !== companyId) {
+      const conversation = await getConversationById(conversationId, companyId);
+      if (!conversation) {
         return Response.json({ messages: [], conversationId: null });
       }
 

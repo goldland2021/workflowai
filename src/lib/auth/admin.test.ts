@@ -4,6 +4,7 @@ import { createSession, verifySession } from "./admin";
 describe("session tokens", () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllEnvs();
   });
 
   it("returns the company ID the token was issued for", () => {
@@ -48,5 +49,12 @@ describe("session tokens", () => {
 
     vi.setSystemTime(new Date("2026-01-02T00:00:01Z")); // 24h + 1s later
     expect(verifySession(token)).toBeNull();
+  });
+
+  it("requires an explicit session secret in production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SESSION_SECRET", "");
+
+    expect(() => createSession("company-123")).toThrow("SESSION_SECRET must be configured in production.");
   });
 });

@@ -5,7 +5,11 @@ export const sessionCookieName = "ai_employee_session";
 const sessionMaxAgeMs = 1000 * 60 * 60 * 24;
 
 function getSessionSecret(): string {
-  return process.env.SESSION_SECRET || "workflowai-dev-session-secret";
+  if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("SESSION_SECRET must be configured in production.");
+  }
+  return "workflowai-dev-session-secret";
 }
 
 function signSessionPayload(payload: string): string {

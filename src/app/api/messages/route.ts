@@ -21,8 +21,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "Invalid request" }, { status: 400 });
     }
 
-    const conversation = await getConversationById(conversationId);
-    if (!conversation || conversation.company_id !== companyId) {
+    const conversation = await getConversationById(conversationId, companyId);
+    if (!conversation) {
       return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
     }
 

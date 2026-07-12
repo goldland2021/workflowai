@@ -1,4 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Keep these business-rule tests deterministic even when a developer has a
+// real LLM configured in the shell running Vitest.
+vi.mock("../ai/client", () => ({
+  hasRealAI: false,
+  generateStructured: vi.fn(async () => {
+    throw new Error("LLM is disabled for deterministic tests.");
+  }),
+  generateReply: vi.fn(async () => {
+    throw new Error("LLM is disabled for deterministic tests.");
+  }),
+}));
+
 import { analyzeCustomerTurn } from "./ai-workflow";
 import { airportTransferConfiguration } from "./airport-transfer";
 import type { TripDetails } from "./types";

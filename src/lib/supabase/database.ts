@@ -84,9 +84,12 @@ export async function getConversationBySessionId(
 
 // Used to check ownership before returning data scoped to a raw conversationId
 // supplied by a caller (e.g. a widget visitor's saved localStorage value).
-export async function getConversationById(conversationId: string): Promise<ConversationRow | null> {
+export async function getConversationById(
+  conversationId: string,
+  companyId: string,
+): Promise<ConversationRow | null> {
   const res = await supabaseFetch(
-    `/rest/v1/conversations?id=eq.${encodeURIComponent(conversationId)}&limit=1`
+    `/rest/v1/conversations?id=eq.${encodeURIComponent(conversationId)}&company_id=eq.${encodeURIComponent(companyId)}&limit=1`
   );
   const data = (await res.json()) as ConversationRow[];
   return data[0] ?? null;
@@ -99,16 +102,23 @@ export async function getConversationsSince(companyId: string, sinceIso: string)
   return (await res.json()) as ConversationRow[];
 }
 
-export async function updateConversationContact(conversationId: string, contact: CapturedContact): Promise<void> {
-  await supabaseFetch(`/rest/v1/conversations?id=eq.${encodeURIComponent(conversationId)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-    body: JSON.stringify({
-      contact_method: contact.method,
-      contact_value: contact.value,
-      updated_at: new Date().toISOString(),
-    }),
-  });
+export async function updateConversationContact(
+  conversationId: string,
+  companyId: string,
+  contact: CapturedContact,
+): Promise<void> {
+  await supabaseFetch(
+    `/rest/v1/conversations?id=eq.${encodeURIComponent(conversationId)}&company_id=eq.${encodeURIComponent(companyId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({
+        contact_method: contact.method,
+        contact_value: contact.value,
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
 }
 
 // ─── Messages ───
@@ -169,9 +179,12 @@ export async function getRecentBookings(companyId: string, limit = 10): Promise<
   return (await res.json()) as BookingRow[];
 }
 
-export async function getBookingByConversationId(conversationId: string): Promise<BookingRow | null> {
+export async function getBookingByConversationId(
+  conversationId: string,
+  companyId: string,
+): Promise<BookingRow | null> {
   const res = await supabaseFetch(
-    `/rest/v1/bookings?conversation_id=eq.${encodeURIComponent(conversationId)}&order=created_at.desc&limit=1`
+    `/rest/v1/bookings?conversation_id=eq.${encodeURIComponent(conversationId)}&company_id=eq.${encodeURIComponent(companyId)}&order=created_at.desc&limit=1`
   );
   const data = (await res.json()) as BookingRow[];
   return data[0] ?? null;
@@ -202,11 +215,11 @@ export async function upsertBooking(
     estimated_drive_time_min: tripDetails.estimatedDriveTimeMinutes,
   };
 
-  const bookingId = existingBookingId ?? (await getBookingByConversationId(conversationId))?.id;
+  const bookingId = existingBookingId ?? (await getBookingByConversationId(conversationId, companyId))?.id;
 
   if (bookingId) {
     await supabaseFetch(
-      `/rest/v1/bookings?id=eq.${encodeURIComponent(bookingId)}`,
+      `/rest/v1/bookings?id=eq.${encodeURIComponent(bookingId)}&company_id=eq.${encodeURIComponent(companyId)}`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
