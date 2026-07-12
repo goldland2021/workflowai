@@ -1,5 +1,5 @@
-﻿import { CalendarCheck, Car, ClipboardCheck, CreditCard, ReceiptText, Send, ShieldCheck, UserRoundCheck } from "lucide-react";
-import type { BookingSummary, DriverDetails, ReceiptRequest } from "@/lib/domain/types";
+import { Car, CreditCard, ReceiptText } from "lucide-react";
+import type { DriverDetails, ReceiptRequest } from "@/lib/domain/types";
 
 export function FulfillmentTracker({
   driverDetails,

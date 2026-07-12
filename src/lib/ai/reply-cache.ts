@@ -1,0 +1,170 @@
+import "server-only";
+
+// ─── Types ───
+
+export interface CacheEntry {
+  /** Normalized message (used as key) */
+  key: string;
+  /** The cached AI reply text */
+  reply: string;
+  /** When this entry was created */
+  createdAt: number;
+  /** How many times this cache hit */
+  hits: number;
+}
+
+// ─── Configuration ───
+
+const MAX_CACHE_SIZE = 200;
+const SIMILARITY_THRESHOLD = 0.65; // 65% similarity required for cache hit
+const CACHE_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
+
+// ─── In-memory store ───
+
+const store = new Map<string, CacheEntry>();
+
+// ─── Text Normalization ───
+
+function normalize(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s\u4e00-\u9fff]/g, "")  // remove punctuation, keep CJK
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// ─── Tokenization ───
+
+function tokenize(text: string): Set<string> {
+  const normalized = normalize(text);
+  const words: string[] = [];
+
+  // Handle Chinese: split by character bigrams
+  const chineseChars = normalized.match(/[\u4e00-\u9fff]/g) || [];
+  if (chineseChars.length > 0) {
+    // Character bigrams for Chinese
+    for (let i = 0; i < chineseChars.length - 1; i++) {
+      words.push(chineseChars[i] + chineseChars[i + 1]);
+    }
+    // Also add single characters
+    words.push(...chineseChars);
+  }
+
+  // English words + numbers
+  const englishTokens = normalized.match(/[a-z0-9]+/g) || [];
+  words.push(...englishTokens);
+
+  return new Set(words);
+}
+
+// ─── Jaccard Similarity ───
+
+function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 1;
+
+  let intersection = 0;
+  for (const item of a) {
+    if (b.has(item)) intersection++;
+  }
+
+  const union = a.size + b.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+// ─── Eviction (LRU-style) ───
+
+function evictIfNeeded(): void {
+  if (store.size < MAX_CACHE_SIZE) return;
+
+  // Remove oldest entries
+  const entries = [...store.entries()]
+    .sort(([, a], [, b]) => a.createdAt - b.createdAt);
+
+  // Remove bottom 20%
+  const removeCount = Math.ceil(MAX_CACHE_SIZE * 0.2);
+  for (let i = 0; i < removeCount && i < entries.length; i++) {
+    store.delete(entries[i][0]);
+  }
+}
+
+// ─── Public API ───
+
+/**
+ * Find a cached reply for a similar message.
+ * Returns undefined if no match found.
+ */
+export function findCachedReply(message: string): string | undefined {
+  const now = Date.now();
+  const tokens = tokenize(message);
+  let bestMatch: { key: string; similarity: number } | undefined;
+
+  for (const [key, entry] of store) {
+    // Check TTL
+    if (now - entry.createdAt > CACHE_TTL_MS) {
+      store.delete(key);
+      continue;
+    }
+
+    const keyTokens = tokenize(key);
+    const similarity = jaccardSimilarity(tokens, keyTokens);
+
+    if (similarity >= SIMILARITY_THRESHOLD && (!bestMatch || similarity > bestMatch.similarity)) {
+      bestMatch = { key, similarity };
+    }
+  }
+
+  if (bestMatch) {
+    const entry = store.get(bestMatch.key)!;
+    entry.hits++;
+    console.log(`[Cache HIT] similarity=${bestMatch.similarity.toFixed(2)} key="${bestMatch.key.slice(0, 40)}..." hits=${entry.hits}`);
+    return entry.reply;
+  }
+
+  return undefined;
+}
+
+/**
+ * Store a reply in the cache.
+ */
+export function cacheReply(message: string, reply: string): void {
+  const key = normalize(message);
+  if (!key) return; // Don't cache empty messages
+
+  evictIfNeeded();
+
+  store.set(key, {
+    key,
+    reply,
+    createdAt: Date.now(),
+    hits: 0,
+  });
+}
+
+/**
+ * Get cache statistics (for debugging/admin).
+ */
+export function getCacheStats(): { size: number; hits: number; entries: Array<{ key: string; hits: number; age: number }> } {
+  const now = Date.now();
+  let totalHits = 0;
+  const entries: Array<{ key: string; hits: number; age: number }> = [];
+
+  for (const [, entry] of store) {
+    totalHits += entry.hits;
+    entries.push({
+      key: entry.key.slice(0, 50),
+      hits: entry.hits,
+      age: Math.round((now - entry.createdAt) / 1000 / 60), // minutes
+    });
+  }
+
+  entries.sort((a, b) => b.hits - a.hits);
+
+  return { size: store.size, hits: totalHits, entries: entries.slice(0, 20) };
+}
+
+/**
+ * Clear the entire cache.
+ */
+export function clearCache(): void {
+  store.clear();
+}

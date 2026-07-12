@@ -1,5 +1,4 @@
-﻿import { useState } from "react";
-import { AlertTriangle, ArrowRight, Check, Edit3, X } from "lucide-react";
+import { ArrowRight, Check, Edit3, X } from "lucide-react";
 import type { BossInboxItem, QuoteSuggestion } from "@/lib/domain/types";
 
 type QuoteEditField = "suggestedPrice" | "currency" | "vehicleType" | "reason" | "includedFees";

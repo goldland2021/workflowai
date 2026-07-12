@@ -1,17 +1,15 @@
-﻿import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { verifyAdminSession, adminSessionCookieName } from "@/lib/auth/admin";
+import { hasAdminSession } from "@/lib/auth/admin";
 import { OwnerWorkspace } from "@/components/owner-workspace";
 import { getAIStatus } from "@/lib/ai/server-status";
 import { getDemoSnapshot } from "@/lib/domain/airport-transfer";
 import { isConfigured } from "@/lib/supabase/client";
-import { getBusinessConfig, getBossInboxItems, getConversations, getMessages } from "@/lib/supabase/database";
+import { getBusinessConfig, getBossInboxItems } from "@/lib/supabase/database";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const cookieStore = await cookies();
-  if (!verifyAdminSession(cookieStore.get(adminSessionCookieName)?.value)) {
+  if (!(await hasAdminSession())) {
     redirect("/login");
   }
   const aiStatus = getAIStatus();
@@ -23,7 +21,6 @@ export default async function Home() {
       // Try to load real data
       const config = await getBusinessConfig();
       const inboxItems = await getBossInboxItems("pending");
-      const conversations = await getConversations(5);
 
       if (config) {
         snapshot = {
@@ -51,7 +48,7 @@ export default async function Home() {
                   id: `quote_${item.id}`,
                   suggestedPrice: item.suggested_price,
                   currency: item.currency ?? "USD",
-                  vehicleType: (item as any).vehicle_type ?? undefined,
+                  vehicleType: item.vehicle_type ?? undefined,
                   reason: item.reason ?? "",
                   confidence: item.confidence ?? 75,
                   missingFields: [],

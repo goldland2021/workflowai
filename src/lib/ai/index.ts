@@ -3,3 +3,4 @@ export * from './client';
 export * from './schemas';
 export * from './extract';
 export * from './reply';
+export * from './reply-cache';

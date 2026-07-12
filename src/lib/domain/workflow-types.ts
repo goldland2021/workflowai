@@ -19,6 +19,8 @@ export interface AnalyzeCustomerTurnRequest {
   existingBossItems: ExistingBossInboxItem[];
   recentMessages?: ConversationMessage[];   // last few turns for context
   businessConfiguration?: BusinessConfiguration; // allow teaching/editing config via UI
+  sessionId?: string;       // browser session for persistence
+  conversationId?: string;  // existing conversation to continue
 }
 
 export interface WorkflowResult {
@@ -27,4 +29,6 @@ export interface WorkflowResult {
   contact?: CapturedContact;
   detectedEvents: DetectedEvent[];
   bossInboxItems: BossInboxItem[];
+  conversationId?: string | null;  // assigned by server
+  isNewConversation?: boolean;
 }

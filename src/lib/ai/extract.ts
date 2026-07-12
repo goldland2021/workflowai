@@ -3,6 +3,7 @@ import { TripDetailsSchema, DetectedEventSchema, QuoteSuggestionSchema, ContactS
 import { z } from 'zod';
 import type { BusinessConfiguration, TripDetails, DetectedEvent, QuoteSuggestion, CapturedContact, TripFieldKey } from '../domain/types';
 import { getMissingQuoteFields } from '../domain/booking-workflow';
+import { buildExtractTripPrompt, buildDetectEventPrompt, buildContactPrompt, buildQuotePrompt, detectLang } from './prompts/templates';
 
 const tripFieldKeys = new Set<TripFieldKey>([
   "serviceType",
@@ -26,34 +27,28 @@ export async function extractTripDetailsWithAI(
   config: BusinessConfiguration
 ): Promise<TripDetails> {
   try {
+    const lang = detectLang(config);
+    const servicesJson = JSON.stringify(config.services.map(s => s.name));
+    const vehiclesJson = JSON.stringify((config.vehicles || []).map(v => ({
+      name: v.name,
+      maxPassengers: v.capacity.passengers,
+      maxLuggage: v.capacity.luggage,
+      description: v.description,
+    })));
+
+    const { system, prompt, temperature } = buildExtractTripPrompt({
+      lang,
+      message,
+      currentTripJson: JSON.stringify(current, null, 2),
+      servicesJson,
+      vehiclesJson,
+    });
+
     const extracted = await generateStructured(
       TripDetailsSchema,
-      `客户消息: "${message}"
-
-当前已知行程信息:
-${JSON.stringify(current, null, 2)}
-
-公司服务和规则（供参考）:
-${JSON.stringify({
-  services: config.services.map(s => s.name),
-  pricingRules: config.pricingRules,
-  serviceArea: config.companyProfile.serviceArea,
-  availableVehicles: (config.vehicles || []).map(v => ({
-    name: v.name,
-    maxPassengers: v.capacity.passengers,
-    maxLuggage: v.capacity.luggage,
-    description: v.description,
-  })),
-}, null, 2)}
-
-从最新客户消息中提取并更新任何新信息或更正的行程细节。
-只包含明确提到或可自信推断的字段。
-允许字段: serviceType, pickupLocation, dropoffLocation, airport, terminal, date, time, flightNumber, flightTime, passengerCount, luggageCount, vehiclePreference, specialRequests。
-serviceType 只能是 airport_pickup, airport_dropoff, city_transfer, round_trip, day_tour, hourly_charter, multi_leg_itinerary。
-passengerCount 和 luggageCount 必须是数字。
-vehiclePreference 应尽量匹配公司可用车型（丰田阿尔法 或 丰田海狮），或根据乘客/行李数量合理推荐。
-返回部分数据 — 不要编造值。`,
-      '你是提取机场接送预订结构化细节的专家。请保守且准确。'
+      prompt,
+      system,
+      temperature
     );
 
     // Merge: LLM output overrides only when present
@@ -79,19 +74,20 @@ export async function detectEventsWithAI(
   config: BusinessConfiguration
 ): Promise<DetectedEvent[]> {
   try {
+    const lang = detectLang(config);
+
+    const { system, prompt, temperature } = buildDetectEventPrompt({
+      lang,
+      message,
+      eventTypesJson: JSON.stringify(config.escalationRules.map(e => e.eventType)),
+      companyName: config.companyProfile.name,
+    });
+
     const events = await generateStructured(
       z.array(DetectedEventSchema),
-      `最新客户消息: "${message}"
-
-业务背景:
-- 升级规则: ${JSON.stringify(config.escalationRules.map(e => e.eventType))}
-- 公司: ${config.companyProfile.name}
-
-检测任何需要老板注意的业务事件。
-返回对象字段: eventType, summary, suggestedOwnerAction, severity。
-severity 只能是 low, medium, high。
-返回一个数组（可以为空）。请精确。`,
-      '仅识别符合允许类型的清晰业务事件。提供可操作的老板建议。'
+      prompt,
+      system,
+      temperature
     );
 
     return events.map((ev, i) => ({
@@ -110,13 +106,13 @@ severity 只能是 low, medium, high。
 
 export async function extractContactWithAI(message: string): Promise<CapturedContact | undefined> {
   try {
+    const { system, prompt, temperature } = buildContactPrompt({ message });
+
     const contact = await generateStructured(
       ContactSchema.nullable(),
-      `Message: "${message}"
-
-Extract any contact method and value the customer wants to be reached at (WhatsApp, Telegram, or Email). 
-Return object fields: method, value.
-Return null if none is provided.`
+      prompt,
+      system,
+      temperature
     );
     return contact || undefined;
   } catch {
@@ -133,24 +129,23 @@ export async function suggestQuoteWithAI(
   if (missing.length > 2) return undefined; // Still too many missing
 
   try {
-    const vehiclesInfo = (config.vehicles || []).map(v => 
-      `${v.name}（最多${v.capacity.passengers}人，${v.capacity.luggage}件行李）：${v.description || ''}`
+    const lang = detectLang(config);
+    const vehiclesInfo = (config.vehicles || []).map(v =>
+      `${v.name}（最大${v.capacity.passengers}人，${v.capacity.luggage}件行李）：${v.description || ''}`
     ).join('\n');
+
+    const { system, prompt, temperature } = buildQuotePrompt({
+      lang,
+      tripDetailsJson: JSON.stringify(tripDetails),
+      pricingRulesJson: JSON.stringify(config.pricingRules),
+      vehiclesInfo: vehiclesInfo || '丰田阿尔法、丰田海狮',
+    });
 
     const suggestion = await generateStructured(
       QuoteSuggestionSchema,
-      `行程细节: ${JSON.stringify(tripDetails)}
-
-可用定价规则:
-${JSON.stringify(config.pricingRules)}
-
-可用车型:
-${vehiclesInfo || '丰田阿尔法、丰田海狮'}
-
-请根据乘客数和行李数量推荐最合适的车型（vehicleType 必须是“丰田阿尔法”或“丰田海狮”之一）。
-建议一个报价。尽可能使用规则。保持现实。
-返回对象字段: suggestedPrice, currency, vehicleType, reason, confidence, missingFields。
-missingFields 必须是字段名数组。`
+      prompt,
+      system,
+      temperature
     );
 
     return {

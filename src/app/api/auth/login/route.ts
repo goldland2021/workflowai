@@ -1,9 +1,17 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createAdminSession, adminSessionCookieName } from "@/lib/auth/admin";
 
 export async function POST(request: Request) {
-  const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
+  const adminPassword =
+    process.env.ADMIN_PASSWORD ?? (process.env.NODE_ENV === "production" ? "" : "admin123");
+
+  if (!adminPassword) {
+    return NextResponse.json(
+      { ok: false, error: "ADMIN_PASSWORD is not configured" },
+      { status: 500 },
+    );
+  }
   
   try {
     const body = await request.json();

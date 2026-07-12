@@ -1,8 +1,13 @@
-﻿import { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { hasAdminSession } from "@/lib/auth/admin";
 import { saveMessage } from "@/lib/supabase/database";
 import { isConfigured } from "@/lib/supabase/client";
 
 export async function POST(request: Request) {
+  if (!(await hasAdminSession())) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
   if (!isConfigured()) {
     return NextResponse.json({ ok: false, error: "Supabase not configured" }, { status: 503 });
   }

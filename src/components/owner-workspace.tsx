@@ -1,25 +1,17 @@
-﻿"use client";
+"use client";
 
 import {
   AlertTriangle,
-  ArrowRight,
   Bot,
-  CalendarCheck,
   Car,
-  Check,
   ClipboardCheck,
-  Clock,
-  CreditCard,
-  Edit3,
   Inbox,
   MessageSquareText,
   Plane,
-  ReceiptText,
   Send,
   ShieldCheck,
   Sparkles,
   UserRoundCheck,
-  X,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
@@ -52,7 +44,6 @@ import { BookingSummaryView } from "./owner-workspace/booking-summary-view";
 import { FulfillmentTracker } from "./owner-workspace/fulfillment-tracker";
 import { Panel, Metric, StatusPill, ProgressRows } from "./owner-workspace/panel";
 import { ErrorBoundary } from "../components/error-boundary";
-import { LoadingSkeleton, PanelSkeleton } from "../components/loading-skeleton";
 
 
 const STORAGE_KEY = "ai-employee-workspace-state-v1";
@@ -175,16 +166,26 @@ export function OwnerWorkspace({ snapshot, aiStatus }: OwnerWorkspaceProps) {
 
   // Load persisted state after hydration
   useEffect(() => {
-    const saved = readSavedWorkspace();
-    if (saved.messages && saved.messages.length > 0) setMessages(saved.messages);
-    if (saved.tripDetails) setTripDetails(saved.tripDetails);
-    if ("contact" in saved) setContact(saved.contact);
-    if (saved.events) setEvents(saved.events);
-    if (saved.bossInbox && saved.bossInbox.length > 0) setBossInbox(saved.bossInbox);
-    if (saved.businessConfig) setBusinessConfig(saved.businessConfig);
-    if (saved.driverDetails) setDriverDetails(saved.driverDetails);
-    if (saved.paymentMethod) setPaymentMethod(saved.paymentMethod);
-    if (saved.receiptRequest) setReceiptRequest(saved.receiptRequest);
+    let active = true;
+
+    queueMicrotask(() => {
+      if (!active) return;
+
+      const saved = readSavedWorkspace();
+      if (saved.messages && saved.messages.length > 0) setMessages(saved.messages);
+      if (saved.tripDetails) setTripDetails(saved.tripDetails);
+      if ("contact" in saved) setContact(saved.contact);
+      if (saved.events) setEvents(saved.events);
+      if (saved.bossInbox && saved.bossInbox.length > 0) setBossInbox(saved.bossInbox);
+      if (saved.businessConfig) setBusinessConfig(saved.businessConfig);
+      if (saved.driverDetails) setDriverDetails(saved.driverDetails);
+      if (saved.paymentMethod) setPaymentMethod(saved.paymentMethod);
+      if (saved.receiptRequest) setReceiptRequest(saved.receiptRequest);
+    });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const [input, setInput] = useState("");
@@ -249,6 +250,22 @@ export function OwnerWorkspace({ snapshot, aiStatus }: OwnerWorkspaceProps) {
       channel: "website_widget",
     };
     setMessages((current) => [...current, msg]);
+  }
+
+  async function persistBossInboxStatus(id: string, status: BossInboxItem["status"]) {
+    if (!["approved", "edited", "rejected"].includes(status)) return;
+
+    try {
+      await fetch("/api/inbox", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ id, status }),
+      });
+    } catch (e) {
+      console.warn("Failed to persist Boss Inbox status", e);
+    }
   }
 
   const approvedQuote = useMemo(
@@ -345,6 +362,7 @@ export function OwnerWorkspace({ snapshot, aiStatus }: OwnerWorkspaceProps) {
     setBossInbox((current) =>
       current.map((i) => (i.id === id ? { ...i, status } : i))
     );
+    void persistBossInboxStatus(id, status);
 
     if (status === "approved" && item?.quote) {
       const quote = item.quote;

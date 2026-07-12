@@ -1,6 +1,6 @@
-﻿import "server-only";
-import { supabaseFetch, isConfigured } from "./client";
-import type { ConversationMessage, BookingSummary, BossInboxItem, BusinessConfiguration, TripDetails, DriverDetails, ReceiptRequest } from "@/lib/domain/types";
+import "server-only";
+import { supabaseFetch } from "./client";
+import type { BossInboxItem, BusinessConfiguration, ConversationMessage, TripDetails } from "@/lib/domain/types";
 
 // ─── Conversations ───
 
@@ -33,6 +33,14 @@ export async function getConversations(limit = 20): Promise<ConversationRow[]> {
   return (await res.json()) as ConversationRow[];
 }
 
+export async function getConversationBySessionId(sessionId: string): Promise<ConversationRow | null> {
+  const res = await supabaseFetch(
+    `/rest/v1/conversations?session_id=eq.${encodeURIComponent(sessionId)}&order=created_at.desc&limit=1`
+  );
+  const data = (await res.json()) as ConversationRow[];
+  return data[0] ?? null;
+}
+
 // ─── Messages ───
 
 export type MessageRow = {
@@ -59,7 +67,7 @@ export async function saveMessage(conversationId: string, msg: ConversationMessa
 
 export async function getMessages(conversationId: string): Promise<MessageRow[]> {
   const res = await supabaseFetch(
-    `/rest/v1/conversation_messages?conversation_id=eq.${conversationId}&order=created_at.asc&limit=100`
+    `/rest/v1/conversation_messages?conversation_id=eq.${encodeURIComponent(conversationId)}&order=created_at.asc&limit=100`
   );
   return (await res.json()) as MessageRow[];
 }
@@ -82,6 +90,14 @@ export type BookingRow = {
   status: string | null;
   created_at: string;
 };
+
+export async function getBookingByConversationId(conversationId: string): Promise<BookingRow | null> {
+  const res = await supabaseFetch(
+    `/rest/v1/bookings?conversation_id=eq.${encodeURIComponent(conversationId)}&order=created_at.desc&limit=1`
+  );
+  const data = (await res.json()) as BookingRow[];
+  return data[0] ?? null;
+}
 
 export async function upsertBooking(
   conversationId: string,
@@ -106,16 +122,18 @@ export async function upsertBooking(
     estimated_drive_time_min: tripDetails.estimatedDriveTimeMinutes,
   };
 
-  if (existingBookingId) {
+  const bookingId = existingBookingId ?? (await getBookingByConversationId(conversationId))?.id;
+
+  if (bookingId) {
     await supabaseFetch(
-      `/rest/v1/bookings?id=eq.${existingBookingId}`,
+      `/rest/v1/bookings?id=eq.${encodeURIComponent(bookingId)}`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
         body: JSON.stringify({ ...body, updated_at: new Date().toISOString() }),
       }
     );
-    return existingBookingId;
+    return bookingId;
   }
 
   const res = await supabaseFetch("/rest/v1/bookings", {
@@ -145,12 +163,16 @@ export type BossInboxRow = {
   severity: string | null;
   suggested_price: number | null;
   currency: string | null;
+  vehicle_type: string | null;
   created_at: string;
 };
 
-export async function createBossInboxItem(item: Partial<BossInboxItem> & { conversationId: string }): Promise<string> {
+export async function createBossInboxItem(
+  item: Partial<BossInboxItem> & { bookingId?: string; conversationId: string },
+): Promise<string> {
   const body: Record<string, unknown> = {
     conversation_id: item.conversationId,
+    booking_id: item.bookingId,
     type: item.type,
     status: item.status || "pending",
     customer_name: item.customerName,
