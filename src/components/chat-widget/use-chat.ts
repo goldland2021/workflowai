@@ -50,11 +50,11 @@ function setConversationId(id: string, companyId?: string) {
   localStorage.setItem(scopedKey(CONVERSATION_KEY, companyId), id);
 }
 
-function createWelcomeMessage(): ChatMessage {
+function createWelcomeMessage(text?: string): ChatMessage {
   return {
     id: "welcome",
     role: "ai",
-    text: "👋 您好！欢迎来到天桥机场接送。请告诉我您的行程信息，我来帮您安排接送服务。",
+    text: text ?? "👋 您好！请告诉我您的行程信息，我来帮您安排接送服务。",
     createdAt: new Date().toISOString(),
   };
 }
@@ -65,8 +65,10 @@ export function useChat(
   defaultOpen = false,
   widgetToken?: string,
   widgetOrigin?: string,
+  welcomeMessage?: string,
+  errorFallbackMessage?: string,
 ): UseChatReturn {
-  const [messages, setMessages] = useState<ChatMessage[]>([createWelcomeMessage()]);
+  const [messages, setMessages] = useState<ChatMessage[]>([createWelcomeMessage(welcomeMessage)]);
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [isTyping, setIsTyping] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -169,13 +171,13 @@ export function useChat(
       setMessages((prev) => [...prev, {
         id: `fallback_${Date.now()}`,
         role: "ai",
-        text: "抱歉，我现在无法回复。请稍后再试或通过 WhatsApp 联系我们。",
+        text: errorFallbackMessage ?? "抱歉，我现在无法回复。请稍后再试或通过 WhatsApp 联系我们。",
         createdAt: new Date().toISOString(),
       }]);
     } finally {
       setIsTyping(false);
     }
-  }, [apiEndpoint, messages, isTyping, companyId, tripDetails, existingBossItems, widgetToken, widgetOrigin]);
+  }, [apiEndpoint, messages, isTyping, companyId, tripDetails, existingBossItems, widgetToken, widgetOrigin, errorFallbackMessage]);
 
   return { messages, isOpen, isTyping, error, toggleOpen, sendMessage, clearError };
 }
