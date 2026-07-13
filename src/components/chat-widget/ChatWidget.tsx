@@ -53,16 +53,24 @@ interface ChatWidgetProps {
 }
 
 const widgetCopy = {
-  zh: { subtitle: "AI 客服在线", typing: "正在输入...", close: "关闭", input: "输入消息...", send: "发送", open: "打开聊天" },
-  en: { subtitle: "AI concierge online", typing: "Typing...", close: "Close", input: "Type a message...", send: "Send", open: "Open chat" },
-  ar: { subtitle: "مساعد الذكاء الاصطناعي متصل", typing: "يكتب...", close: "إغلاق", input: "اكتب رسالة...", send: "إرسال", open: "فتح المحادثة" },
+  zh: { subtitle: "AI 客服在线", typing: "正在输入...", close: "关闭", input: "输入消息...", send: "发送", open: "打开聊天", welcome: (brand: string) => `👋 您好！欢迎来到${brand}。请告诉我您的行程信息，我来帮您安排包车服务。`, error: "抱歉，我现在无法回复。请稍后再试或通过 WhatsApp 联系我们。" },
+  en: { subtitle: "AI concierge online", typing: "Typing...", close: "Close", input: "Type a message...", send: "Send", open: "Open chat", welcome: (brand: string) => `👋 Welcome to ${brand}. Tell me about your itinerary and I will help arrange your private charter.`, error: "Sorry, I cannot reply right now. Please try again later or contact us on WhatsApp." },
+  ar: { subtitle: "مساعد الذكاء الاصطناعي متصل", typing: "يكتب...", close: "إغلاق", input: "اكتب رسالة...", send: "إرسال", open: "فتح المحادثة", welcome: (brand: string) => `👋 مرحبًا بك في ${brand}. أخبرني بتفاصيل رحلتك وسأساعدك في ترتيب سيارة خاصة.`, error: "عذرًا، لا يمكنني الرد الآن. حاول لاحقًا أو تواصل معنا عبر واتساب." },
 } as const;
 
 // ─── Main Component ───
 export default function ChatWidget({ title = "WorkflowAI", subtitle, defaultOpen = false, apiBaseUrl, companyId, widgetToken, widgetOrigin, language = "zh" }: ChatWidgetProps) {
-  const { messages, isOpen, isTyping, error, toggleOpen, sendMessage, clearError } = useChat(companyId, apiBaseUrl, defaultOpen, widgetToken, widgetOrigin);
   const languageKey = language.toLowerCase().startsWith("ar") ? "ar" : language.toLowerCase().startsWith("en") ? "en" : "zh";
   const copy = widgetCopy[languageKey];
+  const { messages, isOpen, isTyping, error, toggleOpen, sendMessage, clearError } = useChat(
+    companyId,
+    apiBaseUrl,
+    defaultOpen,
+    widgetToken,
+    widgetOrigin,
+    copy.welcome(title),
+    copy.error,
+  );
   const [txt, setTxt] = useState("");
   const [hover, setHover] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
