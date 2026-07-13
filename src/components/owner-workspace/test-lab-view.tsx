@@ -24,14 +24,14 @@ import { WorkspaceHeader } from "./workspace-header";
 const TEST_LAB_STORAGE_KEY = "ai-employee-test-lab-v2";
 const LEGACY_TEST_LAB_STORAGE_KEY = "ai-employee-test-lab-v1";
 
-function createFreshTestLabState(): SavedTestLabState {
+function createFreshTestLabState(createdAt = ""): SavedTestLabState {
   return {
     messages: [
       {
-        id: `msg_ai_welcome_${Date.now()}`,
+        id: "msg_ai_welcome",
         role: "ai",
         text: "您好！Hello! 请告诉我您的上车地点和目的地。Please share your pickup location and destination.",
-        createdAt: new Date().toISOString(),
+        createdAt,
         channel: "website_widget",
       },
     ],
@@ -128,7 +128,7 @@ export function TestLabView({ initialBusinessConfig, aiStatus }: TestLabViewProp
   const missingFields = getMissingQuoteFields(tripDetails);
 
   function resetSimulation() {
-    const fresh = createFreshTestLabState();
+    const fresh = createFreshTestLabState(new Date().toISOString());
     localStorage.removeItem(TEST_LAB_STORAGE_KEY);
     localStorage.removeItem(LEGACY_TEST_LAB_STORAGE_KEY);
     setMessages(fresh.messages);
