@@ -209,7 +209,7 @@ export async function analyzeCustomerTurn(params: {
     ]);
     // Keep critical booking fields deterministic even when structured model
     // extraction is temporarily unavailable or returns an incomplete delta.
-    tripDetails = mergeTripDetails(aiTripDetails, params.message);
+    tripDetails = mergeTripDetails(aiTripDetails, params.message, params.currentTripDetails);
     contact = aiContact;
     detectedEvents = aiDetectedEvents;
   } else {
@@ -286,7 +286,11 @@ export async function analyzeCustomerTurn(params: {
   };
 }
 
-function mergeTripDetails(current: TripDetails, message: string): TripDetails {
+function mergeTripDetails(
+  current: TripDetails,
+  message: string,
+  trustedCurrent: TripDetails = current,
+): TripDetails {
   const lower = message.toLowerCase();
   const next: TripDetails = { ...current };
   const route = message.match(/from\s+(.+?)\s+to\s+(.+?)(?:[.,]|$|\s+on\s+|\s+at\s+|\s+with\s+|\s+for\s+)/i);
@@ -294,7 +298,9 @@ function mergeTripDetails(current: TripDetails, message: string): TripDetails {
   const travelingTo = message.match(/(?:traveling|travelling|going)\s+to\s+(.+?)(?:[.,]|$)/i);
   const dropOnly = message.match(/drop(?:\s|-)?off\s+(?:is|at|to)?\s*([a-z0-9\s'-]+)(?:[.,]|$)/i);
   const pickupOnly = message.match(/pick(?:\s|-)?up\s+(?:is|at|from)?\s*([a-z0-9\s'-]+)(?:[.,]|$)/i);
-  const flight = message.match(/\b[A-Z]{2}\s?\d{1,4}\b/i);
+  const uppercaseFlight = message.match(/\b[A-Z]{2}\s?\d{1,4}\b/);
+  const labelledFlight = message.match(/\bflight(?:\s+number)?\s*(?:is|:)?\s*([a-z0-9]{2}\s?\d{1,4})\b/i);
+  const flight = uppercaseFlight?.[0] ?? labelledFlight?.[1];
   const time = message.match(/\b(?:[01]?\d|2[0-3])[:.][0-5]\d\s*(?:am|pm)?\b|\b\d{1,2}\s?(?:am|pm)\b/i);
   const numberPattern = "\\d+|one|two|three|four|five|six|seven|eight|nine|ten";
   const passengers = message.match(new RegExp(`\\b(${numberPattern})\\s*(?:passengers?|people|pax|persons?|adults?)\\b`, "i"));
@@ -373,11 +379,12 @@ function mergeTripDetails(current: TripDetails, message: string): TripDetails {
 
   if (time) {
     next.time = normalizeTime(time[0]);
-    if (next.serviceType === "airport_pickup" && !next.flightTime) {
-      next.flightTime = `${next.time} arrival`;
-    }
   }
-  if (flight) next.flightNumber = flight[0].toUpperCase().replace(/\s+/, " ");
+  if (flight) next.flightNumber = flight.toUpperCase().replace(/\s+/, " ");
+  if (!flight) {
+    next.flightNumber = trustedCurrent.flightNumber;
+    next.flightTime = trustedCurrent.flightTime;
+  }
   if (passengers) next.passengerCount = parseNumberToken(passengers[1]);
   if (luggage) next.luggageCount = parseNumberToken(luggage[1]);
 

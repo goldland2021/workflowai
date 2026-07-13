@@ -212,6 +212,8 @@ describe("analyzeCustomerTurn - multi-turn trip state", () => {
       passengerCount: 2,
       luggageCount: 2,
     });
+    expect(result.tripDetails.flightNumber).toBeUndefined();
+    expect(result.tripDetails.flightTime).toBeUndefined();
   });
 });
 
