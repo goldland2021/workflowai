@@ -12,9 +12,9 @@ vi.mock("../ai/client", () => ({
   }),
 }));
 
-import { analyzeCustomerTurn } from "./ai-workflow";
+import { analyzeCustomerTurn, filterDetectedEventsForMessage } from "./ai-workflow";
 import { airportTransferConfiguration } from "./airport-transfer";
-import type { TripDetails } from "./types";
+import type { DetectedEvent, TripDetails } from "./types";
 
 // These tests exercise the rule-based fallback path (no LLM env vars are set
 // in the test environment, so `hasRealAI` is false and analyzeCustomerTurn
@@ -101,6 +101,40 @@ describe("analyzeCustomerTurn - event detection escalates, never decides", () =>
   });
 });
 
+describe("event validation guards high-risk false positives", () => {
+  const event = (eventType: DetectedEvent["eventType"]): DetectedEvent => ({
+    id: `event-${eventType}`,
+    eventType,
+    summary: "model output",
+    suggestedOwnerAction: "review",
+    severity: "medium",
+    status: "pending",
+  });
+
+  it("does not treat an ordinary future transfer as urgent", () => {
+    const events = filterDetectedEventsForMessage(
+      "Transfer on July 20 from Narita to Shinjuku",
+      [event("Urgent Booking")],
+    );
+
+    expect(events).toEqual([]);
+  });
+
+  it("does not treat emailing a quote as a receipt request", () => {
+    const events = filterDetectedEventsForMessage(
+      "Please send the quote to jane@example.com",
+      [event("Receipt Request")],
+    );
+
+    expect(events).toEqual([]);
+  });
+
+  it("keeps explicit urgent and receipt requests", () => {
+    expect(filterDetectedEventsForMessage("I need a pickup today, it is urgent", [event("Urgent Booking")])).toHaveLength(1);
+    expect(filterDetectedEventsForMessage("Please issue an invoice", [event("Receipt Request")])).toHaveLength(1);
+  });
+});
+
 describe("analyzeCustomerTurn - contact capture timing", () => {
   it("does not ask for contact info on a neutral message with no purchase intent", async () => {
     const result = await analyzeCustomerTurn({
@@ -156,5 +190,30 @@ describe("analyzeCustomerTurn - multi-turn trip state", () => {
     expect(secondTurn.tripDetails.passengerCount).toBe(2);
     expect(secondTurn.tripDetails.dropoffLocation).toBe("city hotel");
     expect(secondTurn.tripDetails.time).toBe("18:30");
+  });
+});
+
+describe("analyzeCustomerTurn - message presentation", () => {
+  it("uses an ISO timestamp so customer and AI times render in the same browser timezone", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "Hello",
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(Number.isNaN(Date.parse(result.aiMessage.createdAt))).toBe(false);
+  });
+
+  it("uses the latest customer's language instead of the first configured language", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "Please quote a transfer from Narita Airport to Shinjuku",
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.aiMessage.text).toMatch(/Got it|Thanks|What is|WhatsApp|Telegram|email/i);
+    expect(result.aiMessage.text).not.toMatch(/[\u3400-\u9fff]/u);
   });
 });

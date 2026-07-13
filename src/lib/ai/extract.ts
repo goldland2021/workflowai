@@ -3,7 +3,7 @@ import { TripDetailsSchema, DetectedEventSchema, QuoteSuggestionSchema, ContactS
 import { z } from 'zod';
 import type { BusinessConfiguration, TripDetails, DetectedEvent, QuoteSuggestion, CapturedContact, TripFieldKey } from '../domain/types';
 import { getMissingQuoteFields } from '../domain/booking-workflow';
-import { buildExtractTripPrompt, buildDetectEventPrompt, buildContactPrompt, buildQuotePrompt, detectLang } from './prompts/templates';
+import { buildExtractTripPrompt, buildDetectEventPrompt, buildContactPrompt, buildQuotePrompt, detectCustomerLang, detectLang } from './prompts/templates';
 
 const tripFieldKeys = new Set<TripFieldKey>([
   "serviceType",
@@ -27,7 +27,7 @@ export async function extractTripDetailsWithAI(
   config: BusinessConfiguration
 ): Promise<TripDetails> {
   try {
-    const lang = detectLang(config);
+    const lang = detectCustomerLang(message, config);
     const servicesJson = JSON.stringify(config.services.map(s => s.name));
     const vehiclesJson = JSON.stringify((config.vehicles || []).map(v => ({
       name: v.name,
@@ -74,12 +74,17 @@ export async function detectEventsWithAI(
   config: BusinessConfiguration
 ): Promise<DetectedEvent[]> {
   try {
-    const lang = detectLang(config);
+    const lang = detectCustomerLang(message, config);
 
     const { system, prompt, temperature } = buildDetectEventPrompt({
       lang,
       message,
       eventTypesJson: JSON.stringify(config.escalationRules.map(e => e.eventType)),
+      escalationRulesJson: JSON.stringify(config.escalationRules.map(e => ({
+        eventType: e.eventType,
+        description: e.description,
+        requiresOwnerApproval: e.requiresOwnerApproval,
+      }))),
       companyName: config.companyProfile.name,
     });
 

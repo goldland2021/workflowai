@@ -21,6 +21,7 @@ import {
 } from "../ai/extract";
 import { generateAiReplyWithAI } from "../ai/reply";
 import { hasRealAI } from "../ai";
+import { detectCustomerLang, type PromptLang } from "../ai/prompts/templates";
 
 const eventKeywords: Array<{
   type: EventType;
@@ -141,6 +142,38 @@ const fieldLabels: Record<TripFieldKey, string> = {
   vehiclePreference: "vehicle preference",
 };
 
+const fieldLabelsZh: Record<TripFieldKey, string> = {
+  serviceType: "服务类型",
+  pickupLocation: "上车地点",
+  dropoffLocation: "下车地点",
+  airport: "机场",
+  terminal: "航站楼",
+  date: "行程日期",
+  time: "上车时间",
+  flightNumber: "航班号",
+  flightTime: "航班时间",
+  passengerCount: "乘客人数",
+  luggageCount: "行李数量",
+  vehiclePreference: "车型偏好",
+};
+
+const explicitEventIntent: Partial<Record<EventType, RegExp>> = {
+  "Urgent Booking": /\b(?:urgent|asap|right now|today|tonight|immediately|same[- ]day|in (?:one|1) hour)\b|紧急|立即|马上|今天|今晚|当日/iu,
+  "Receipt Request": /\b(?:receipt|invoice)\b|发票|收据/iu,
+  "Route Change": /\b(?:change|update|switch|different|another)\b.{0,30}\b(?:route|pickup|drop-?off|destination|hotel|stop)\b|(?:改|更改|调整|换).{0,12}(?:路线|上车|下车|目的地|酒店)/iu,
+  "Pickup Time Change": /\b(?:change|update|move|reschedule|earlier|later|new)\b.{0,30}\b(?:pickup|pick-up|time|leave)\b|(?:改|更改|调整|提前|延后|推迟).{0,12}(?:接车|上车|时间|出发)/iu,
+};
+
+export function filterDetectedEventsForMessage(
+  message: string,
+  events: DetectedEvent[],
+): DetectedEvent[] {
+  return events.filter((event) => {
+    const requiredIntent = explicitEventIntent[event.eventType];
+    return requiredIntent ? requiredIntent.test(message) : true;
+  });
+}
+
 const numberWords: Record<string, number> = {
   one: 1,
   two: 2,
@@ -181,6 +214,10 @@ export async function analyzeCustomerTurn(params: {
     detectedEvents = detectEvents(params.message);
   }
 
+  // The application owns event boundaries. Structured model output is useful,
+  // but high-impact event types still require explicit customer intent.
+  detectedEvents = filterDetectedEventsForMessage(params.message, detectedEvents);
+
   const missingFields = getMissingQuoteFields(tripDetails);
 
   let quote: QuoteSuggestion | undefined;
@@ -195,7 +232,12 @@ export async function analyzeCustomerTurn(params: {
     quote,
     tripDetails,
     existingBossItems: params.existingBossItems,
-    createdAt: formatTime(now),
+    ownerApprovalEventTypes: new Set(
+      params.configuration.escalationRules
+        .filter((rule) => rule.requiresOwnerApproval)
+        .map((rule) => rule.eventType),
+    ),
+    createdAt: now.toISOString(),
   });
 
   let aiMessage: ConversationMessage;
@@ -214,7 +256,7 @@ export async function analyzeCustomerTurn(params: {
       id: `msg_ai_${Date.now()}`,
       role: "ai",
       text,
-      createdAt: formatTime(now),
+      createdAt: now.toISOString(),
       channel: "website_widget",
     };
   } else {
@@ -225,7 +267,8 @@ export async function analyzeCustomerTurn(params: {
       detectedEvents,
       missingFields,
       quote,
-      createdAt: formatTime(now),
+      lang: detectCustomerLang(params.message, params.configuration),
+      createdAt: now.toISOString(),
     });
   }
 
@@ -403,6 +446,7 @@ function createBossInboxItems(params: {
   quote?: QuoteSuggestion;
   tripDetails: TripDetails;
   existingBossItems: ExistingBossInboxItem[];
+  ownerApprovalEventTypes: Set<EventType>;
   createdAt: string;
 }): BossInboxItem[] {
   const existingPendingTypes = new Set(
@@ -412,6 +456,7 @@ function createBossInboxItems(params: {
   );
 
   const eventItems = params.detectedEvents
+    .filter((event) => params.ownerApprovalEventTypes.has(event.eventType))
     .filter((event) => !existingPendingTypes.has(event.eventType))
     .map((event): BossInboxItem => ({
       id: `boss_${event.id}`,
@@ -456,27 +501,40 @@ function createAiMessage(params: {
   detectedEvents: DetectedEvent[];
   missingFields: TripFieldKey[];
   quote?: QuoteSuggestion;
+  lang: PromptLang;
   createdAt: string;
 }): ConversationMessage {
   const purchaseIntent = hasPurchaseIntent(params.customerMessage);
   const eventText =
     params.detectedEvents.length > 0
-      ? " I have flagged this for owner review because it needs a business decision."
+      ? params.lang === "zh"
+        ? " 这项请求需要业务决定，我已提交老板审核。"
+        : " I have flagged this for owner review because it needs a business decision."
       : "";
   let text: string;
 
   if (params.contact) {
-    text = `Thanks, I have saved your ${params.contact.method}.`;
+    text = params.lang === "zh"
+      ? `谢谢，已记录您的${params.contact.method}联系方式。`
+      : `Thanks, I have saved your ${params.contact.method}.`;
   } else if (params.quote) {
-    text = `I have enough trip details to prepare a ${params.quote.currency} ${params.quote.suggestedPrice} quote suggestion for the owner.${eventText}`;
+    text = params.lang === "zh"
+      ? `行程信息已经足够，我会为老板准备报价建议。${eventText}`
+      : `I have enough trip details to prepare a quote suggestion for the owner.${eventText}`;
   } else if (params.missingFields.length > 0) {
     const nextField = params.missingFields[0];
     const contactAsk = purchaseIntent
-      ? " Also, what is the best WhatsApp, Telegram, or email for updates?"
+      ? params.lang === "zh"
+        ? " 另外，方便提供 WhatsApp、Telegram 或邮箱接收更新吗？"
+        : " Also, what is the best WhatsApp, Telegram, or email for updates?"
       : "";
-    text = `Got it. What is the ${fieldLabels[nextField]}?${contactAsk}${eventText}`;
+    text = params.lang === "zh"
+      ? `好的，请问${fieldLabelsZh[nextField]}是什么？${contactAsk}${eventText}`
+      : `Got it. What is the ${fieldLabels[nextField]}?${contactAsk}${eventText}`;
   } else {
-    text = `Thanks, I will prepare the next step for the owner.${eventText}`;
+    text = params.lang === "zh"
+      ? `谢谢，我会为老板准备下一步。${eventText}`
+      : `Thanks, I will prepare the next step for the owner.${eventText}`;
   }
 
   return {
@@ -596,12 +654,4 @@ function formatNumberToken(value: string): string {
 
 function normalizeTime(value: string): string {
   return value.trim().replace(".", ":").replace(/\s+/g, " ").toUpperCase();
-}
-
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
 }

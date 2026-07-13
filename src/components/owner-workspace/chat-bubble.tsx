@@ -1,4 +1,15 @@
-﻿import type { ConversationMessage } from "@/lib/domain/types";
+import type { ConversationMessage } from "@/lib/domain/types";
+
+function formatMessageTime(value: string): string {
+  if (/^\d{2}:\d{2}$/.test(value)) return value;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
 
 export function ChatBubble({ message }: { message: ConversationMessage }) {
   const isCustomer = message.role === "customer";
@@ -11,9 +22,10 @@ export function ChatBubble({ message }: { message: ConversationMessage }) {
         }`}
       >
         <p className="break-words">{message.text}</p>
-        <p className={`mt-1 text-[11px] ${isCustomer ? "text-emerald-100" : "text-stone-500"}`}>{message.createdAt}</p>
+        <p className={`mt-1 text-[11px] ${isCustomer ? "text-emerald-100" : "text-stone-500"}`}>
+          {formatMessageTime(message.createdAt)}
+        </p>
       </div>
     </div>
   );
 }
-

@@ -4,7 +4,6 @@ import { AlertTriangle, ClipboardCheck, Plane, Send, UserRoundCheck } from "luci
 import { FormEvent, useEffect, useState } from "react";
 import type { AIStatus } from "@/lib/ai/status-types";
 import { analyzeCustomerTurnOnServer } from "@/lib/client/ai-workflow-api";
-import { getDemoSnapshot } from "@/lib/domain/airport-transfer";
 import { getMissingQuoteFields } from "@/lib/domain/booking-workflow";
 import { realChatScenarios } from "@/lib/domain/real-chat-scenarios";
 import { BusinessConfigurationSchema } from "@/lib/domain/schemas";
@@ -22,7 +21,25 @@ import { Panel } from "./panel";
 import { TRAIN_STORAGE_KEY } from "./train-employee-view";
 import { WorkspaceHeader } from "./workspace-header";
 
-const TEST_LAB_STORAGE_KEY = "ai-employee-test-lab-v1";
+const TEST_LAB_STORAGE_KEY = "ai-employee-test-lab-v2";
+const LEGACY_TEST_LAB_STORAGE_KEY = "ai-employee-test-lab-v1";
+
+function createFreshTestLabState(): SavedTestLabState {
+  return {
+    messages: [
+      {
+        id: `msg_ai_welcome_${Date.now()}`,
+        role: "ai",
+        text: "您好！Hello! 请告诉我您的上车地点和目的地。Please share your pickup location and destination.",
+        createdAt: new Date().toISOString(),
+        channel: "website_widget",
+      },
+    ],
+    tripDetails: {},
+    events: [],
+    previewItems: [],
+  };
+}
 
 interface SavedTestLabState {
   messages: ConversationMessage[];
@@ -75,15 +92,14 @@ interface TestLabViewProps {
 }
 
 export function TestLabView({ initialBusinessConfig, aiStatus }: TestLabViewProps) {
-  const demo = getDemoSnapshot();
-
-  const [messages, setMessages] = useState<ConversationMessage[]>(demo.conversation);
-  const [tripDetails, setTripDetails] = useState<TripDetails>(demo.tripDetails);
-  const [contact, setContact] = useState<CapturedContact | undefined>(demo.contact);
-  const [events, setEvents] = useState<DetectedEvent[]>(demo.detectedEvents);
+  const [messages, setMessages] = useState<ConversationMessage[]>(() => createFreshTestLabState().messages);
+  const [tripDetails, setTripDetails] = useState<TripDetails>({});
+  const [contact, setContact] = useState<CapturedContact | undefined>();
+  const [events, setEvents] = useState<DetectedEvent[]>([]);
   const [previewItems, setPreviewItems] = useState<BossInboxItem[]>([]);
   const [input, setInput] = useState("");
   const [isThinking, setIsThinking] = useState(false);
+  const [hasLoadedSavedState, setHasLoadedSavedState] = useState(false);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -93,10 +109,12 @@ export function TestLabView({ initialBusinessConfig, aiStatus }: TestLabViewProp
       if ("contact" in saved) setContact(saved.contact);
       if (saved.events) setEvents(saved.events);
       if (saved.previewItems) setPreviewItems(saved.previewItems);
+      setHasLoadedSavedState(true);
     });
   }, []);
 
   useEffect(() => {
+    if (!hasLoadedSavedState) return;
     try {
       localStorage.setItem(
         TEST_LAB_STORAGE_KEY,
@@ -105,17 +123,19 @@ export function TestLabView({ initialBusinessConfig, aiStatus }: TestLabViewProp
     } catch (e) {
       console.warn("Failed to persist Test Lab state", e);
     }
-  }, [messages, tripDetails, contact, events, previewItems]);
+  }, [hasLoadedSavedState, messages, tripDetails, contact, events, previewItems]);
 
   const missingFields = getMissingQuoteFields(tripDetails);
 
   function resetSimulation() {
+    const fresh = createFreshTestLabState();
     localStorage.removeItem(TEST_LAB_STORAGE_KEY);
-    setMessages(demo.conversation);
-    setTripDetails(demo.tripDetails);
-    setContact(demo.contact);
-    setEvents(demo.detectedEvents);
-    setPreviewItems([]);
+    localStorage.removeItem(LEGACY_TEST_LAB_STORAGE_KEY);
+    setMessages(fresh.messages);
+    setTripDetails(fresh.tripDetails);
+    setContact(undefined);
+    setEvents(fresh.events);
+    setPreviewItems(fresh.previewItems);
     setInput("");
     setIsThinking(false);
   }
@@ -129,7 +149,7 @@ export function TestLabView({ initialBusinessConfig, aiStatus }: TestLabViewProp
       id: `msg_customer_live_${turnId}`,
       role: "customer",
       text: trimmed,
-      createdAt: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }),
+      createdAt: new Date().toISOString(),
       channel: "website_widget",
     };
 

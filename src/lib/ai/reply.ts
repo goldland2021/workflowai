@@ -1,5 +1,5 @@
 import { generateReply } from './client';
-import { buildReplyPrompt, detectLang } from './prompts/templates';
+import { buildReplyPrompt, detectCustomerLang } from './prompts/templates';
 import type { 
   TripDetails, DetectedEvent, CapturedContact, QuoteSuggestion, TripFieldKey,
   BusinessConfiguration, ConversationMessage
@@ -21,7 +21,7 @@ export async function generateAiReplyWithAI(params: {
   } = params;
 
   const company = configuration?.companyProfile;
-  const lang = detectLang(configuration);
+  const lang = detectCustomerLang(customerMessage, configuration);
 
   const keyPolicies = configuration ? {
     businessHours: configuration.businessHours,
@@ -67,6 +67,12 @@ export async function generateAiReplyWithAI(params: {
     return await generateReply(prompt, system, temperature);
   } catch {
     console.warn('LLM reply generation failed, using fallback');
+    if (lang === 'en') {
+      if (contact) return `Thanks, I have saved your ${contact.method}.`;
+      if (quote) return `I have enough information to prepare a quote suggestion for the owner.`;
+      if (missingFields.length > 0) return `Thanks. Please provide the ${missingFields[0]} details.`;
+      return `Thank you. We will continue with the next step.`;
+    }
     if (contact) return `已记录您的${contact.method}。`;
     if (quote) return `信息已足够，我会为老板准备报价建议。`;
     if (missingFields.length > 0) return `好的，请提供${missingFields[0]}相关信息。`;

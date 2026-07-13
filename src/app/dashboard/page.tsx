@@ -13,6 +13,7 @@ import {
 } from "@/lib/supabase/database";
 import { Metric, Panel } from "@/components/owner-workspace/panel";
 import { WorkspaceHeader } from "@/components/owner-workspace/workspace-header";
+import { PLAN_DEFINITIONS } from "@/lib/saas/plans";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
@@ -105,7 +106,13 @@ export default async function DashboardPage() {
               ))}
             </div>
             <p className="mt-3 text-xs text-stone-600">
-              当前套餐：{usageSummary.plan} · {usageSummary.trialExpired ? "试用已结束" : `试用至 ${new Date(usageSummary.trialEndsAt).toLocaleDateString("zh-CN")}`}
+              当前套餐：{PLAN_DEFINITIONS[usageSummary.plan].label} · {usageSummary.plan === "trial"
+                ? usageSummary.trialExpired
+                  ? "试用已结束"
+                  : `试用至 ${new Date(usageSummary.trialEndsAt).toLocaleDateString("zh-CN")}`
+                : usageSummary.subscriptionCurrentPeriodEnd
+                  ? `当前周期至 ${new Date(usageSummary.subscriptionCurrentPeriodEnd).toLocaleDateString("zh-CN")}`
+                  : `状态：${usageSummary.subscriptionStatus}`}
             </p>
             <Link className="mt-3 inline-flex text-xs font-semibold text-emerald-800 hover:underline" href="/billing">
               查看套餐与管理账单 →

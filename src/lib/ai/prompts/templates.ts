@@ -11,6 +11,16 @@ export function detectLang(config?: BusinessConfiguration): PromptLang {
   return "en";
 }
 
+/** Prefer the language used in the latest customer turn over the company's
+ * list of supported languages. The configuration is only a fallback for
+ * messages that contain no useful language signal (for example, an emoji).
+ */
+export function detectCustomerLang(message: string, config?: BusinessConfiguration): PromptLang {
+  if (/[\u3400-\u9fff]/u.test(message)) return "zh";
+  if (/[a-z]/iu.test(message)) return "en";
+  return detectLang(config);
+}
+
 // ─── 客服回复模板 ───
 
 export function buildReplyPrompt(params: {
@@ -163,6 +173,7 @@ export function buildDetectEventPrompt(params: {
   lang: PromptLang;
   message: string;
   eventTypesJson: string;
+  escalationRulesJson: string;
   companyName: string;
 }): { system: string; prompt: string; temperature: number } {
   const isZh = params.lang === "zh";
@@ -175,17 +186,27 @@ export function buildDetectEventPrompt(params: {
       ? `最新客户消息: "${params.message}"
 
 业务背景:
-- 升级规则: ${params.eventTypesJson}
+- 允许的事件类型: ${params.eventTypesJson}
+- 事件定义: ${params.escalationRulesJson}
 - 公司: ${params.companyName}
 
-检测任何需要老板注意的业务事件。返回对象字段: eventType, summary, suggestedOwnerAction, severity。返回数组（可为空）。请精确。`
+检测任何需要老板注意的业务事件。严格遵守事件定义，不要仅凭相近词语推断：
+- 只有当天、立即、尽快或明确说“紧急”才是 Urgent Booking；普通未来日期不是紧急预订。
+- 只有明确索要 receipt、invoice、发票或收据才是 Receipt Request；要求把报价发到邮箱不是收据请求。
+- 首次提供路线或时间不是 Route Change 或 Pickup Time Change，只有明确修改已提供信息才算变更。
+返回对象字段: eventType, summary, suggestedOwnerAction, severity。返回数组（可为空）。宁可不报，也不要误报。`
       : `Latest customer message: "${params.message}"
 
 Business context:
-- Escalation rules: ${params.eventTypesJson}
+- Allowed event types: ${params.eventTypesJson}
+- Event definitions: ${params.escalationRulesJson}
 - Company: ${params.companyName}
 
-Detect any business events requiring owner attention. Fields: eventType, summary, suggestedOwnerAction, severity. Return an array (can be empty). Be precise.`,
+Detect business events requiring owner attention. Follow the event definitions strictly instead of inferring from loosely related words:
+- Urgent Booking requires same-day/immediate/ASAP intent or an explicit statement that it is urgent. An ordinary future date is not urgent.
+- Receipt Request requires an explicit request for a receipt or invoice. Asking to send a quote by email is not a receipt request.
+- Providing a route or pickup time for the first time is not Route Change or Pickup Time Change. Those events require an explicit correction or change.
+Fields: eventType, summary, suggestedOwnerAction, severity. Return an array (can be empty). Prefer no event over a false positive.`,
     temperature: 0.2,
   };
 }
