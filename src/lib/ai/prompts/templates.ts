@@ -1,12 +1,13 @@
 import "server-only";
 import type { BusinessConfiguration } from "@/lib/domain/types";
 
-export type PromptLang = "zh" | "en";
+export type PromptLang = "zh" | "en" | "ar";
 
 /** 从配置中推断语言（从公司语言列表推断） */
 export function detectLang(config?: BusinessConfiguration): PromptLang {
   if (!config?.companyProfile?.languages) return "zh";
   const langs = config.companyProfile.languages.join(" ");
+  if (/العربية|arabic|(^|\s)ar(\s|$)/iu.test(langs)) return "ar";
   if (langs.includes("中文") || langs.includes("zh")) return "zh";
   return "en";
 }
@@ -17,6 +18,7 @@ export function detectLang(config?: BusinessConfiguration): PromptLang {
  */
 export function detectCustomerLang(message: string, config?: BusinessConfiguration): PromptLang {
   if (/[\u3400-\u9fff]/u.test(message)) return "zh";
+  if (/[\u0600-\u06ff]/u.test(message)) return "ar";
   if (/[a-z]/iu.test(message)) return "en";
   return detectLang(config);
 }
@@ -41,6 +43,7 @@ export function buildReplyPrompt(params: {
   hasQuote: boolean;
 }): { system: string; prompt: string; temperature: number } {
   const isZh = params.lang === "zh";
+  const isAr = params.lang === "ar";
 
   const system = isZh
     ? `你是"${params.companyName}"的专业AI客服员工，负责机场接送服务。
@@ -68,6 +71,35 @@ ${params.aiBoundaries.map((b) => `- ${b}`).join("\n") || "（无）"}
 - 不要声称邮件、报价或消息已经发送或会自动发送；应说明老板批准后会使用已记录的联系方式跟进
 - 语气保持专业高效，像经验丰富的接送客服
 - 如果信息已经足够，告诉客户你会为老板准备报价建议`
+
+    : isAr
+      ? `أنت موظف خدمة العملاء المحترف بالذكاء الاصطناعي لدى "${params.companyName}" لخدمات النقل والسيارات الخاصة.
+رسالة العميل الأخيرة باللغة العربية. أجب باللغة العربية فقط، حتى لو كانت أسماء السيارات أو معلومات الشركة أو الأسئلة الشائعة مكتوبة بلغة أخرى.
+
+معلومات الشركة:
+- منطقة الخدمة: ${params.serviceArea || "اليابان وخطوط المطارات والمدن"}
+- ساعات العمل: ${params.businessHours || "يتم تأكيد وقت الرد والتوفر بشريًا"}
+- طرق الدفع: ${params.paymentMethods?.join("، ") || "يتم تأكيدها بشريًا"}
+- سياسة الانتظار: ${params.waitingPolicy || "تُؤكد حسب الرحلة"}
+
+السيارات المتاحة:
+${params.vehicles}
+
+الأسئلة الشائعة:
+${params.faq || "لا توجد"}
+
+حدود سلوك الذكاء الاصطناعي:
+${params.aiBoundaries.map((b) => `- ${b}`).join("\n") || "لا توجد"}
+
+القواعد:
+- اطرح سؤالًا واحدًا فقط في كل مرة، وأكمل أهم المعلومات الناقصة أولًا
+- أوصِ بسيارة مناسبة حسب عدد الركاب والأمتعة
+- استخدم الأسئلة الشائعة عند الإجابة
+- اطلب وسيلة تواصل بلطف عند وجود نية حجز
+- لا تعرض أرقام أسعار محددة
+- لا تدّع أن رسالة أو عرض سعر أُرسل تلقائيًا؛ اشرح أن المالك سيتابع بعد الموافقة
+- حافظ على أسلوب مهني ومختصر
+- عندما تكتمل المعلومات، أخبر العميل أنك ستجهز اقتراحًا للمالك`
 
     : `You are the professional AI customer service agent of "${params.companyName}", responsible for airport transfer services.
 The customer's latest message is in English. Reply only in English, even when company names, vehicle names, payment methods, or FAQ content are written in Chinese.
@@ -112,6 +144,22 @@ ${params.contactInfo ? `已捕获联系方式：${params.contactInfo}` : ""}
 ${params.hasQuote ? "已为老板准备了报价建议（不要向客户透露具体价格数字）" : ""}
 
 请用自然、专业、简洁的中文回复客户（1-4句话）。直接输出回复文字，不要加解释。`
+
+    : isAr
+      ? `سجل المحادثة الأخير:
+${params.recentHistory || "لا يوجد"}
+
+رسالة العميل الأخيرة:
+"${params.customerMessage}"
+
+تفاصيل الرحلة الحالية:
+${params.tripJson}
+
+الحقول الناقصة: ${params.missingFields || "لا يوجد"}
+${params.contactInfo ? `تم تسجيل وسيلة التواصل: ${params.contactInfo}` : ""}
+${params.hasQuote ? "تم إعداد اقتراح للمالك (لا تعرض أرقام الأسعار للعميل)" : ""}
+
+أجب بالعربية الطبيعية والمهنية والمختصرة في 1-4 جمل. أخرج نص الرد فقط دون شرح إضافي.`
     : `Recent conversation:
 ${params.recentHistory || "(none)"}
 

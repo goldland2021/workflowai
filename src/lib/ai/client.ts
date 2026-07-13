@@ -27,9 +27,6 @@ const usesOpenAICompatibleChat = Boolean(baseURL);
 
 export const model = usesOpenAICompatibleChat ? openai.chat(modelName) : openai(modelName);
 
-// 强制 DeepSeek 等模型用中文回复
-const CHINESE_SYSTEM = '你必须用中文回复。保持专业、简洁、礼貌。';
-
 export const hasRealAI = hasServerAIProvider();
 
 export async function generateStructured<Schema extends z.ZodTypeAny>(
@@ -90,7 +87,7 @@ export async function generateReply(
   const result = await generateText({
     model,
     prompt,
-    system: `${baseSystem}\n\n${CHINESE_SYSTEM}\n回复必须使用中文。`,
+    system: baseSystem,
     temperature: temp,
   });
 

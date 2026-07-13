@@ -1,23 +1,32 @@
 import { generateReply } from './client';
-import { buildReplyPrompt, detectCustomerLang } from './prompts/templates';
+import { buildReplyPrompt, detectCustomerLang, type PromptLang } from './prompts/templates';
 import type { 
   TripDetails, DetectedEvent, CapturedContact, QuoteSuggestion, TripFieldKey,
   BusinessConfiguration, ConversationMessage
 } from '../domain/types';
 
-export function replyLanguageMatches(text: string, lang: "zh" | "en"): boolean {
+export function replyLanguageMatches(text: string, lang: PromptLang): boolean {
   const cjkCount = text.match(/[\u3400-\u9fff]/gu)?.length ?? 0;
+  const arabicCount = text.match(/[\u0600-\u06ff]/gu)?.length ?? 0;
   const latinCount = text.match(/[a-z]/giu)?.length ?? 0;
-  return lang === "zh" ? cjkCount > 0 : latinCount >= cjkCount;
+  if (lang === "zh") return cjkCount > 0;
+  if (lang === "ar") return arabicCount > 0;
+  return latinCount >= cjkCount && latinCount >= arabicCount;
 }
 
 function fallbackReply(params: {
-  lang: "zh" | "en";
+  lang: PromptLang;
   contact?: CapturedContact;
   quote?: QuoteSuggestion;
   missingFields: TripFieldKey[];
 }): string {
   const { lang, contact, quote, missingFields } = params;
+  if (lang === 'ar') {
+    if (contact) return `شكرًا، تم تسجيل ${contact.method}. سأجهز اقتراح الرحلة للمالك.`;
+    if (quote) return `المعلومات كافية لإعداد اقتراح للمالك. ما أفضل رقم واتساب أو بريد إلكتروني للمتابعة؟`;
+    if (missingFields.length > 0) return `شكرًا. يرجى تزويدي بتفاصيل ${missingFields[0]}.`;
+    return `شكرًا لمعلوماتك. سنتابع الخطوة التالية معك.`;
+  }
   if (lang === 'en') {
     if (contact) return `Thanks, I have saved your ${contact.method}. I will prepare the quote suggestion for the owner.`;
     if (quote) return `I have enough information to prepare a quote suggestion for the owner. What is the best WhatsApp, Telegram, or email for updates?`;
@@ -63,7 +72,7 @@ export async function generateAiReplyWithAI(params: {
   // 扩大上下文：从 slice(-6) 改为 slice(-10)
   const recentHistory = (recentMessages || [])
     .slice(-10)
-    .map(m => `${m.role === 'customer' ? (lang === 'zh' ? '客户' : 'Customer') : 'AI'}: ${m.text}`)
+    .map(m => `${m.role === 'customer' ? (lang === 'zh' ? '客户' : lang === 'ar' ? 'العميل' : 'Customer') : 'AI'}: ${m.text}`)
     .join('\n');
 
   const faqText = (configuration?.faq || []).map(f =>
