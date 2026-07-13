@@ -55,7 +55,7 @@ function createWelcomeMessage(text?: string): ChatMessage {
     id: "welcome",
     role: "ai",
     text: text ?? "👋 您好！请告诉我您的行程信息，我来帮您安排接送服务。",
-    createdAt: new Date().toISOString(),
+    createdAt: "",
   };
 }
 
