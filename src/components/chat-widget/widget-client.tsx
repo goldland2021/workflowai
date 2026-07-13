@@ -11,8 +11,18 @@ interface WidgetClientProps {
   companyId?: string;
   widgetToken?: string;
   widgetOrigin?: string;
+  title?: string;
+  language?: string;
 }
 
-export default function WidgetClient({ companyId, widgetToken, widgetOrigin }: WidgetClientProps) {
-  return <ChatWidget companyId={companyId} widgetToken={widgetToken} widgetOrigin={widgetOrigin} defaultOpen />;
+export default function WidgetClient({ companyId, widgetToken, widgetOrigin, title, language }: WidgetClientProps) {
+  return (
+    <ChatWidget
+      companyId={companyId}
+      widgetToken={widgetToken}
+      widgetOrigin={widgetOrigin}
+      title={title}
+      language={language}
+    />
+  );
 }

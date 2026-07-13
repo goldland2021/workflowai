@@ -23,7 +23,9 @@ const SCRIPT = (baseUrl: string, widgetSrc: string) => `
 
   // Create iframe
   var iframe = document.createElement("iframe");
-  iframe.src = BASE + ${JSON.stringify(widgetSrc)} + "&origin=" + encodeURIComponent(window.location.origin);
+  iframe.src = BASE + ${JSON.stringify(widgetSrc)}
+    + "&origin=" + encodeURIComponent(window.location.origin)
+    + "&lang=" + encodeURIComponent(document.documentElement.lang || "en");
   iframe.style.cssText = "border:none;width:420px;height:620px;position:fixed;bottom:0;right:0;z-index:999999;background:transparent;pointer-events:none;";
   iframe.title = "Chat Widget";
   iframe.setAttribute("aria-label", "Chat Widget");

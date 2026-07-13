@@ -49,11 +49,20 @@ interface ChatWidgetProps {
   companyId?: string;
   widgetToken?: string;
   widgetOrigin?: string;
+  language?: string;
 }
 
+const widgetCopy = {
+  zh: { subtitle: "AI 客服在线", typing: "正在输入...", close: "关闭", input: "输入消息...", send: "发送", open: "打开聊天" },
+  en: { subtitle: "AI concierge online", typing: "Typing...", close: "Close", input: "Type a message...", send: "Send", open: "Open chat" },
+  ar: { subtitle: "مساعد الذكاء الاصطناعي متصل", typing: "يكتب...", close: "إغلاق", input: "اكتب رسالة...", send: "إرسال", open: "فتح المحادثة" },
+} as const;
+
 // ─── Main Component ───
-export default function ChatWidget({ title = "天桥机场接送", subtitle = "AI 客服在线", defaultOpen = false, apiBaseUrl, companyId, widgetToken, widgetOrigin }: ChatWidgetProps) {
+export default function ChatWidget({ title = "WorkflowAI", subtitle, defaultOpen = false, apiBaseUrl, companyId, widgetToken, widgetOrigin, language = "zh" }: ChatWidgetProps) {
   const { messages, isOpen, isTyping, error, toggleOpen, sendMessage, clearError } = useChat(companyId, apiBaseUrl, defaultOpen, widgetToken, widgetOrigin);
+  const languageKey = language.toLowerCase().startsWith("ar") ? "ar" : language.toLowerCase().startsWith("en") ? "en" : "zh";
+  const copy = widgetCopy[languageKey];
   const [txt, setTxt] = useState("");
   const [hover, setHover] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
@@ -80,10 +89,10 @@ export default function ChatWidget({ title = "天桥机场接送", subtitle = "A
               <div style={styles.headerAvatar}>🤖</div>
               <div>
                 <p style={styles.headerTitle}>{title}</p>
-                <p style={styles.headerSubtitle}>{isTyping ? "正在输入..." : subtitle}</p>
+                <p style={styles.headerSubtitle}>{isTyping ? copy.typing : (subtitle ?? copy.subtitle)}</p>
               </div>
             </div>
-            <button onClick={toggleOpen} style={styles.headerClose} aria-label="关闭">✕</button>
+            <button onClick={toggleOpen} style={styles.headerClose} aria-label={copy.close}>✕</button>
           </div>
           <div style={styles.messageList}>
             {messages.map((m) => m.role !== "system" ? (
@@ -110,13 +119,13 @@ export default function ChatWidget({ title = "天桥机场接送", subtitle = "A
             </div>
           )}
           <div style={styles.inputArea}>
-            <textarea ref={inpRef} value={txt} onChange={onInput} onKeyDown={onKey} placeholder="输入消息..." rows={1} style={styles.input} disabled={isTyping} aria-label="消息输入" />
-            <button onClick={send} disabled={!txt.trim() || isTyping} style={{ ...styles.sendButton, ...(!txt.trim() || isTyping ? styles.sendButtonDisabled : {}) }} aria-label="发送"><SendIcon /></button>
+            <textarea ref={inpRef} value={txt} onChange={onInput} onKeyDown={onKey} placeholder={copy.input} rows={1} style={styles.input} disabled={isTyping} aria-label={copy.input} dir={languageKey === "ar" ? "rtl" : "auto"} />
+            <button onClick={send} disabled={!txt.trim() || isTyping} style={{ ...styles.sendButton, ...(!txt.trim() || isTyping ? styles.sendButtonDisabled : {}) }} aria-label={copy.send}><SendIcon /></button>
           </div>
         </div>
       )}
       {!isOpen && (
-        <button onClick={toggleOpen} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} style={{ ...styles.bubble, ...(hover ? styles.bubbleHover : {}) }} aria-label="打开聊天">
+        <button onClick={toggleOpen} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} style={{ ...styles.bubble, ...(hover ? styles.bubbleHover : {}) }} aria-label={copy.open}>
           <ChatIcon />
           <div style={styles.notificationDot} />
         </button>
