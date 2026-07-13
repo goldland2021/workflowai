@@ -5,10 +5,10 @@ export const metadata = {
 };
 
 interface WidgetPageProps {
-  searchParams: Promise<{ company?: string }>;
+  searchParams: Promise<{ company?: string; token?: string; origin?: string }>;
 }
 
 export default async function WidgetPage({ searchParams }: WidgetPageProps) {
-  const { company } = await searchParams;
-  return <WidgetClient companyId={company} />;
+  const { company, token, origin } = await searchParams;
+  return <WidgetClient companyId={company} widgetToken={token} widgetOrigin={origin} />;
 }

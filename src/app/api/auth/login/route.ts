@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { z } from "zod";
-import { createSession, sessionCookieName } from "@/lib/auth/admin";
+import { createSession, sessionCookieName, sessionMaxAgeSeconds } from "@/lib/auth/admin";
 import { UNUSABLE_PASSWORD_HASH, verifyPassword } from "@/lib/auth/password";
 import { isConfigured } from "@/lib/supabase/client";
 import { getCompanyByEmail } from "@/lib/supabase/database";
+import { storeAuthSession } from "@/lib/supabase/saas";
 
 const LoginRequestSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(200),
@@ -42,6 +43,15 @@ export async function POST(request: Request) {
     }
 
     const token = createSession(company.id);
+    try {
+      await storeAuthSession(
+        company.id,
+        token,
+        new Date(Date.now() + sessionMaxAgeSeconds * 1000).toISOString(),
+      );
+    } catch {
+      // Existing installations can continue until migration 003 is applied.
+    }
     const cookieStore = await cookies();
     cookieStore.set(sessionCookieName, token, {
       httpOnly: true,

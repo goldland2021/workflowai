@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { z } from "zod";
-import { createSession, sessionCookieName } from "@/lib/auth/admin";
+import { createSession, sessionCookieName, sessionMaxAgeSeconds } from "@/lib/auth/admin";
+import { sendAuthLink } from "@/lib/auth/email";
 import { hashPassword } from "@/lib/auth/password";
 import { isConfigured } from "@/lib/supabase/client";
 import { createCompany, getCompanyByEmail } from "@/lib/supabase/database";
+import { createAuthToken, storeAuthSession } from "@/lib/supabase/saas";
 
 const RegisterRequestSchema = z.object({
   companyName: z.string().trim().min(1).max(200),
@@ -41,6 +43,27 @@ export async function POST(request: Request) {
     const company = await createCompany({ name: companyName, email, passwordHash });
 
     const token = createSession(company.id);
+    try {
+      await storeAuthSession(
+        company.id,
+        token,
+        new Date(Date.now() + sessionMaxAgeSeconds * 1000).toISOString(),
+      );
+    } catch {
+      // Existing installations can continue until migration 003 is applied.
+    }
+
+    try {
+      const verificationToken = await createAuthToken(company.id, "email_verification", 1000 * 60 * 60 * 24 * 3);
+      await sendAuthLink({
+        to: company.email,
+        subject: "Verify your WorkflowAI email",
+        url: `${new URL(request.url).origin}/api/auth/verify-email?token=${encodeURIComponent(verificationToken)}`,
+      });
+    } catch {
+      // Email delivery is optional until AUTH_EMAIL_WEBHOOK_URL is configured.
+    }
+
     const cookieStore = await cookies();
     cookieStore.set(sessionCookieName, token, {
       httpOnly: true,

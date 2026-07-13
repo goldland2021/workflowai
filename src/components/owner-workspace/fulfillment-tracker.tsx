@@ -8,6 +8,8 @@ export function FulfillmentTracker({
   onDriverChange,
   onPaymentMethodChange,
   onReceiptChange,
+  onSave,
+  isSaving = false,
 }: {
   driverDetails: DriverDetails;
   paymentMethod: string;
@@ -15,6 +17,8 @@ export function FulfillmentTracker({
   onDriverChange: (field: keyof DriverDetails, value: string) => void;
   onPaymentMethodChange: (value: string) => void;
   onReceiptChange: (changes: Partial<ReceiptRequest>) => void;
+  onSave?: () => void;
+  isSaving?: boolean;
 }) {
   const driverFields: Array<[keyof DriverDetails, string, string]> = [
     ["name", "司机姓名", "Assigned driver"],
@@ -95,6 +99,17 @@ export function FulfillmentTracker({
           </div>
         )}
       </div>
+
+      {onSave && (
+        <button
+          className="w-full rounded-md bg-emerald-800 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-900 disabled:opacity-50"
+          disabled={isSaving}
+          onClick={onSave}
+          type="button"
+        >
+          {isSaving ? "保存中…" : "保存履约信息"}
+        </button>
+      )}
     </div>
   );
 }

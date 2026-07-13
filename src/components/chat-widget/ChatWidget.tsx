@@ -41,11 +41,19 @@ function ChatIcon() { return <svg viewBox="0 0 24 24" style={styles.bubbleIcon}>
 function SendIcon() { return <svg viewBox="0 0 24 24" style={styles.sendIcon}><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor" /></svg>; }
 
 // ─── Props ───
-interface ChatWidgetProps { title?: string; subtitle?: string; defaultOpen?: boolean; apiBaseUrl?: string; companyId?: string; }
+interface ChatWidgetProps {
+  title?: string;
+  subtitle?: string;
+  defaultOpen?: boolean;
+  apiBaseUrl?: string;
+  companyId?: string;
+  widgetToken?: string;
+  widgetOrigin?: string;
+}
 
 // ─── Main Component ───
-export default function ChatWidget({ title = "天桥机场接送", subtitle = "AI 客服在线", defaultOpen = false, apiBaseUrl, companyId }: ChatWidgetProps) {
-  const { messages, isOpen, isTyping, error, toggleOpen, sendMessage, clearError } = useChat(companyId, apiBaseUrl, defaultOpen);
+export default function ChatWidget({ title = "天桥机场接送", subtitle = "AI 客服在线", defaultOpen = false, apiBaseUrl, companyId, widgetToken, widgetOrigin }: ChatWidgetProps) {
+  const { messages, isOpen, isTyping, error, toggleOpen, sendMessage, clearError } = useChat(companyId, apiBaseUrl, defaultOpen, widgetToken, widgetOrigin);
   const [txt, setTxt] = useState("");
   const [hover, setHover] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);

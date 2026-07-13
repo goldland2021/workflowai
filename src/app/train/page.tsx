@@ -15,9 +15,15 @@ export default async function TrainPage() {
   }
 
   const aiStatus = getAIStatus();
-  const businessConfig = isConfigured()
-    ? (await getBusinessConfig(companyId)) ?? airportTransferConfiguration
-    : airportTransferConfiguration;
+  const storedConfig = isConfigured() ? await getBusinessConfig(companyId) : null;
+  const businessConfig = storedConfig ?? airportTransferConfiguration;
 
-  return <TrainEmployeeView businessConfig={businessConfig} companyId={companyId} aiStatus={aiStatus} />;
+  return (
+    <TrainEmployeeView
+      businessConfig={businessConfig}
+      companyId={companyId}
+      aiStatus={aiStatus}
+      hasStoredConfig={Boolean(storedConfig)}
+    />
+  );
 }

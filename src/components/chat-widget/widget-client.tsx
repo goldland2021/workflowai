@@ -9,8 +9,10 @@ const ChatWidget = dynamic(
 
 interface WidgetClientProps {
   companyId?: string;
+  widgetToken?: string;
+  widgetOrigin?: string;
 }
 
-export default function WidgetClient({ companyId }: WidgetClientProps) {
-  return <ChatWidget companyId={companyId} defaultOpen />;
+export default function WidgetClient({ companyId, widgetToken, widgetOrigin }: WidgetClientProps) {
+  return <ChatWidget companyId={companyId} widgetToken={widgetToken} widgetOrigin={widgetOrigin} defaultOpen />;
 }

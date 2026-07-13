@@ -1,10 +1,11 @@
 "use client";
 
-import { Sparkles, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Circle, ExternalLink, Sparkles, ShieldCheck } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { AIStatus } from "@/lib/ai/status-types";
 import { BusinessConfigurationSchema } from "@/lib/domain/schemas";
-import type { BusinessConfiguration, FAQ, Vehicle } from "@/lib/domain/types";
+import type { BusinessConfiguration, FAQ, PricingRule, Vehicle } from "@/lib/domain/types";
 import { Panel, ProgressRows, StatusPill } from "./panel";
 import { WorkspaceHeader } from "./workspace-header";
 
@@ -14,14 +15,36 @@ interface TrainEmployeeViewProps {
   businessConfig: BusinessConfiguration;
   companyId: string;
   aiStatus: AIStatus;
+  hasStoredConfig?: boolean;
 }
 
-export function TrainEmployeeView({ businessConfig: initialConfig, companyId, aiStatus }: TrainEmployeeViewProps) {
+export function TrainEmployeeView({
+  businessConfig: initialConfig,
+  companyId,
+  aiStatus,
+  hasStoredConfig = false,
+}: TrainEmployeeViewProps) {
   const [businessConfig, setBusinessConfig] = useState<BusinessConfiguration>(initialConfig);
+  const [isConfigPublished, setIsConfigPublished] = useState(hasStoredConfig);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [saveConfigResult, setSaveConfigResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [showEmbedSnippet, setShowEmbedSnippet] = useState(false);
   const [embedCopied, setEmbedCopied] = useState(false);
+  const [embedSnippet, setEmbedSnippet] = useState("");
+  const [allowedOrigins, setAllowedOrigins] = useState("");
+  const [settingsMessage, setSettingsMessage] = useState("");
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/company/settings")
+      .then((response) => response.json())
+      .then((data) => {
+        if (Array.isArray(data.allowedWidgetOrigins)) {
+          setAllowedOrigins(data.allowedWidgetOrigins.join(", "));
+        }
+      })
+      .catch(() => undefined);
+  }, [companyId]);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -44,11 +67,6 @@ export function TrainEmployeeView({ businessConfig: initialConfig, companyId, ai
     }
   }, [businessConfig]);
 
-  const embedSnippet =
-    typeof window !== "undefined"
-      ? `<script src="${window.location.origin}/api/widget-embed?company=${companyId}"></script>`
-      : "";
-
   async function copyEmbedSnippet() {
     try {
       await navigator.clipboard.writeText(embedSnippet);
@@ -59,11 +77,115 @@ export function TrainEmployeeView({ businessConfig: initialConfig, companyId, ai
     }
   }
 
+  async function loadEmbedSnippet() {
+    const nextOpen = !showEmbedSnippet;
+    setShowEmbedSnippet(nextOpen);
+    if (!nextOpen || embedSnippet) return;
+
+    const response = await fetch("/api/widget-token");
+    const data = await response.json().catch(() => null);
+    if (response.ok && data?.embedCode) {
+      setEmbedSnippet(data.embedCode);
+      setSettingsMessage("");
+    } else {
+      setSettingsMessage(data?.error ?? "请先配置允许的网站域名。");
+    }
+  }
+
+  async function saveWidgetSettings() {
+    setIsSavingSettings(true);
+    setSettingsMessage("");
+    try {
+      const origins = allowedOrigins.split(",").map((value) => value.trim()).filter(Boolean);
+      const response = await fetch("/api/company/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allowedWidgetOrigins: origins }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        setSettingsMessage(data?.error ?? "保存失败");
+        return;
+      }
+      setAllowedOrigins((data.allowedWidgetOrigins ?? origins).join(", "));
+      setEmbedSnippet("");
+      setSettingsMessage("域名已保存");
+    } catch {
+      setSettingsMessage("保存失败，请稍后重试");
+    } finally {
+      setIsSavingSettings(false);
+    }
+  }
+
   function updateCompanyProfile(field: "name" | "serviceArea", value: string) {
     setBusinessConfig((current) => ({
       ...current,
       companyProfile: { ...current.companyProfile, [field]: value },
     }));
+  }
+
+  function updatePaymentMethods(value: string) {
+    const paymentMethods = value
+      .split(/[\n,]/)
+      .map((method) => method.trim())
+      .filter(Boolean);
+    setBusinessConfig((current) => ({
+      ...current,
+      companyProfile: { ...current.companyProfile, paymentMethods },
+    }));
+  }
+
+  function updatePricingRule(index: number, changes: Partial<PricingRule>) {
+    setBusinessConfig((current) => {
+      const pricingRules = [...current.pricingRules];
+      const rule = pricingRules[index];
+      if (!rule) return current;
+      pricingRules[index] = { ...rule, ...changes };
+      return { ...current, pricingRules };
+    });
+  }
+
+  function addPricingRule() {
+    setBusinessConfig((current) => ({
+      ...current,
+      pricingRules: [
+        ...current.pricingRules,
+        {
+          id: `price_${Date.now()}`,
+          label: "新报价规则",
+          description: "请填写适用路线或服务说明。",
+          basePrice: 0,
+          currency: "USD",
+        },
+      ],
+    }));
+  }
+
+  function removePricingRule(index: number) {
+    setBusinessConfig((current) => ({
+      ...current,
+      pricingRules: current.pricingRules.filter((_, itemIndex) => itemIndex !== index),
+    }));
+  }
+
+  function updateEscalationRule(index: number, changes: { description?: string; requiresOwnerApproval?: boolean }) {
+    setBusinessConfig((current) => {
+      const escalationRules = [...current.escalationRules];
+      const rule = escalationRules[index];
+      if (!rule) return current;
+      escalationRules[index] = { ...rule, ...changes };
+      return { ...current, escalationRules };
+    });
+  }
+
+  function updateRequiredBookingField(index: number, requiredForQuote: boolean) {
+    setBusinessConfig((current) => {
+      const requiredBookingFields = [...current.requiredBookingFields];
+      const field = requiredBookingFields[index];
+      if (!field) return current;
+      requiredBookingFields[index] = { ...field, requiredForQuote };
+      return { ...current, requiredBookingFields };
+    });
   }
 
   function addVehicle() {
@@ -131,6 +253,7 @@ export function TrainEmployeeView({ businessConfig: initialConfig, companyId, ai
       const data = await res.json().catch(() => null);
 
       if (res.ok) {
+        setIsConfigPublished(true);
         setSaveConfigResult({ ok: true, message: "已保存，客服机器人将立即使用新配置。" });
       } else {
         setSaveConfigResult({ ok: false, message: data?.error ?? `保存失败（${res.status}）` });
@@ -141,6 +264,28 @@ export function TrainEmployeeView({ businessConfig: initialConfig, companyId, ai
       setIsSavingConfig(false);
     }
   }
+
+  const companyProfileComplete = Boolean(
+    businessConfig.companyProfile.name.trim() && businessConfig.companyProfile.serviceArea.trim(),
+  );
+  const pricingComplete = businessConfig.pricingRules.length > 0 && businessConfig.pricingRules.every(
+    (rule) => rule.label.trim() && rule.basePrice >= 0,
+  );
+  const escalationComplete = businessConfig.escalationRules.length > 0;
+  const contactCaptureComplete = businessConfig.contactCaptureRules.some(
+    (rule) => rule.trigger.trim() && rule.preferredMethods.length > 0,
+  );
+  const requiredFieldsComplete = businessConfig.requiredBookingFields.length > 0;
+  const setupItems = [
+    ["公司档案", companyProfileComplete],
+    ["报价规则", pricingComplete],
+    ["老板审批规则", escalationComplete],
+    ["联系方式捕获", contactCaptureComplete],
+    ["预订必填字段", requiredFieldsComplete],
+    ["已保存并发布", isConfigPublished],
+    ["已配置网站域名", allowedOrigins.trim().length > 0],
+    ["已生成 Widget 代码", Boolean(embedSnippet)],
+  ] as const;
 
   return (
     <main className="min-h-screen bg-[#f7f5ef] text-stone-950">
@@ -166,13 +311,124 @@ export function TrainEmployeeView({ businessConfig: initialConfig, companyId, ai
               </div>
               <ProgressRows
                 rows={[
-                  ["公司档案", true],
-                  ["定价规则", true],
-                  ["升级规则", true],
-                  ["联系方式捕获", true],
-                  ["预订字段", true],
+                  ["公司档案", companyProfileComplete],
+                  ["定价规则", pricingComplete],
+                  ["升级规则", escalationComplete],
+                  ["联系方式捕获", contactCaptureComplete],
+                  ["预订字段", requiredFieldsComplete],
                 ]}
               />
+              <div>
+                <label className="text-xs font-medium text-stone-500">营业时间</label>
+                <textarea
+                  className="mt-1 min-h-16 w-full rounded border border-stone-300 px-2 py-1 text-sm leading-6 text-stone-700"
+                  value={businessConfig.businessHours}
+                  onChange={(event) => setBusinessConfig((current) => ({ ...current, businessHours: event.target.value }))}
+                  rows={2}
+                />
+                <label className="mt-2 block text-xs font-medium text-stone-500">支付方式（每行或逗号分隔）</label>
+                <textarea
+                  className="mt-1 min-h-16 w-full rounded border border-stone-300 px-2 py-1 text-sm leading-6 text-stone-700"
+                  value={businessConfig.companyProfile.paymentMethods.join("\n")}
+                  onChange={(event) => updatePaymentMethods(event.target.value)}
+                  rows={2}
+                />
+              </div>
+
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <p className="text-xs font-medium text-stone-500">报价规则</p>
+                  <button
+                    onClick={addPricingRule}
+                    className="rounded border border-emerald-700 px-2 py-0.5 text-[10px] text-emerald-700 hover:bg-emerald-50"
+                    type="button"
+                  >
+                    + 添加规则
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {businessConfig.pricingRules.map((rule, idx) => (
+                    <div key={rule.id} className="space-y-1 rounded border border-stone-200 bg-white px-2 py-2">
+                      <div className="grid gap-1 sm:grid-cols-[1fr_6rem_5rem]">
+                        <input
+                          className="rounded border border-stone-300 px-2 py-1 text-xs font-medium"
+                          value={rule.label}
+                          onChange={(event) => updatePricingRule(idx, { label: event.target.value })}
+                          placeholder="规则名称"
+                        />
+                        <input
+                          className="rounded border border-stone-300 px-2 py-1 text-xs"
+                          type="number"
+                          min="0"
+                          value={rule.basePrice}
+                          onChange={(event) => updatePricingRule(idx, { basePrice: Math.max(0, Number(event.target.value) || 0) })}
+                          aria-label="基础价格"
+                        />
+                        <input
+                          className="rounded border border-stone-300 px-2 py-1 text-xs uppercase"
+                          value={rule.currency}
+                          onChange={(event) => updatePricingRule(idx, { currency: event.target.value.toUpperCase() })}
+                          aria-label="货币"
+                        />
+                      </div>
+                      <textarea
+                        className="w-full rounded border border-stone-300 px-2 py-1 text-xs text-stone-600"
+                        value={rule.description}
+                        onChange={(event) => updatePricingRule(idx, { description: event.target.value })}
+                        rows={2}
+                        placeholder="适用路线、车型、包含费用"
+                      />
+                      <button onClick={() => removePricingRule(idx)} className="text-[10px] text-red-600 hover:underline" type="button">
+                        删除此规则
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <p className="mb-1 text-xs font-medium text-stone-500">老板审批规则</p>
+                <div className="space-y-2">
+                  {businessConfig.escalationRules.map((rule, idx) => (
+                    <div key={rule.id} className="rounded border border-stone-200 bg-white px-2 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-stone-800">{rule.eventType}</span>
+                        <label className="flex shrink-0 items-center gap-1 text-[10px] text-stone-600">
+                          <input
+                            type="checkbox"
+                            checked={rule.requiresOwnerApproval}
+                            onChange={(event) => updateEscalationRule(idx, { requiresOwnerApproval: event.target.checked })}
+                          />
+                          需要老板审批
+                        </label>
+                      </div>
+                      <textarea
+                        className="mt-1 w-full rounded border border-stone-300 px-2 py-1 text-xs text-stone-600"
+                        value={rule.description}
+                        onChange={(event) => updateEscalationRule(idx, { description: event.target.value })}
+                        rows={2}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <p className="mb-1 text-xs font-medium text-stone-500">报价前必填字段</p>
+                <div className="grid gap-1 sm:grid-cols-2">
+                  {businessConfig.requiredBookingFields.map((field, idx) => (
+                    <label key={field.key} className="flex items-center gap-2 rounded border border-stone-200 bg-white px-2 py-1.5 text-xs text-stone-700">
+                      <input
+                        type="checkbox"
+                        checked={field.requiredForQuote}
+                        onChange={(event) => updateRequiredBookingField(idx, event.target.checked)}
+                      />
+                      {field.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
               <div>
                 <div className="text-xs font-medium text-stone-500 mb-1">支持语言</div>
                 <div className="flex flex-wrap gap-2">
@@ -270,7 +526,7 @@ export function TrainEmployeeView({ businessConfig: initialConfig, companyId, ai
               title="安装到你的网站"
               icon={<ShieldCheck size={18} aria-hidden="true" />}
               action={
-                <button onClick={() => setShowEmbedSnippet((v) => !v)} type="button">
+                <button onClick={loadEmbedSnippet} type="button">
                   <StatusPill label="网站挂件" />
                 </button>
               }
@@ -294,6 +550,53 @@ export function TrainEmployeeView({ businessConfig: initialConfig, companyId, ai
               ) : (
                 <p className="text-sm leading-6 text-stone-600">点击右上角“网站挂件”获取嵌入代码。</p>
               )}
+            </Panel>
+
+            <Panel title="Widget安全设置" icon={<ShieldCheck size={18} aria-hidden="true" />}>
+              <div className="space-y-3">
+                <label className="grid gap-1 text-xs font-medium text-stone-600">
+                  允许安装 Widget 的网站来源
+                  <input
+                    className="min-h-9 rounded-md border border-stone-300 bg-white px-2 text-sm text-stone-900 outline-none focus:border-emerald-700 focus:ring-2 focus:ring-emerald-700/15"
+                    onChange={(event) => setAllowedOrigins(event.target.value)}
+                    placeholder="https://example.com, https://www.example.com"
+                    value={allowedOrigins}
+                  />
+                </label>
+                <p className="text-xs leading-5 text-stone-500">多个域名用英文逗号分隔。Widget只接受这些网站发起的对话。</p>
+                <button
+                  className="rounded border border-emerald-700 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50"
+                  disabled={isSavingSettings}
+                  onClick={saveWidgetSettings}
+                  type="button"
+                >
+                  {isSavingSettings ? "保存中…" : "保存域名设置"}
+                </button>
+                {settingsMessage && <p className="text-xs text-stone-600">{settingsMessage}</p>}
+              </div>
+            </Panel>
+
+            <Panel title="上线检查清单" icon={<CheckCircle2 size={18} aria-hidden="true" />}>
+              <div className="space-y-2">
+                {setupItems.map(([label, complete]) => (
+                  <div className="flex items-center gap-2 text-xs" key={label}>
+                    {complete ? (
+                      <CheckCircle2 className="text-emerald-700" size={15} aria-hidden="true" />
+                    ) : (
+                      <Circle className="text-stone-400" size={15} aria-hidden="true" />
+                    )}
+                    <span className={complete ? "text-stone-800" : "text-stone-500"}>{label}</span>
+                  </div>
+                ))}
+                <div className="flex flex-wrap gap-2 border-t border-stone-200 pt-3 text-xs">
+                  <Link className="inline-flex items-center gap-1 font-semibold text-emerald-800 hover:underline" href="/test-lab">
+                    打开测试实验室 <ExternalLink size={12} aria-hidden="true" />
+                  </Link>
+                  <Link className="inline-flex items-center gap-1 font-semibold text-emerald-800 hover:underline" href="/conversations">
+                    查看客户对话 <ExternalLink size={12} aria-hidden="true" />
+                  </Link>
+                </div>
+              </div>
             </Panel>
 
             <Panel title="公司知识库（保存后AI才会使用）" icon={<Sparkles size={18} aria-hidden="true" />}>

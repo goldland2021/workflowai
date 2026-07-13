@@ -135,3 +135,26 @@ describe("analyzeCustomerTurn - contact capture timing", () => {
     expect(result.contact).toEqual({ method: "Email", value: "jane@example.com" });
   });
 });
+
+describe("analyzeCustomerTurn - multi-turn trip state", () => {
+  it("keeps earlier trip fields when the next customer turn adds more details", async () => {
+    const firstTurn = await analyzeCustomerTurn({
+      message: "Please take us from Narita Airport to city hotel with 2 passengers",
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    const secondTurn = await analyzeCustomerTurn({
+      message: "Tomorrow at 18:30",
+      currentTripDetails: firstTurn.tripDetails,
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(secondTurn.tripDetails.pickupLocation).toBe("Narita Airport");
+    expect(secondTurn.tripDetails.passengerCount).toBe(2);
+    expect(secondTurn.tripDetails.dropoffLocation).toBe("city hotel");
+    expect(secondTurn.tripDetails.time).toBe("18:30");
+  });
+});

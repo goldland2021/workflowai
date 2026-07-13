@@ -3,9 +3,10 @@ import { getCurrentCompanyId } from "@/lib/auth/admin";
 import { OwnerWorkspace } from "@/components/owner-workspace";
 import { getAIStatus } from "@/lib/ai/server-status";
 import { getDemoSnapshot } from "@/lib/domain/airport-transfer";
+import { createBookingSummary } from "@/lib/domain/booking-workflow";
 import { isConfigured } from "@/lib/supabase/client";
-import { getBossInboxItems } from "@/lib/supabase/database";
-import type { BossInboxItem } from "@/lib/domain/types";
+import { getWorkspaceInboxRecords } from "@/lib/supabase/database";
+import type { BossInboxItem, WorkspaceWorkflowRecord } from "@/lib/domain/types";
 
 export const dynamic = "force-dynamic";
 
@@ -17,50 +18,28 @@ export default async function Home() {
 
   const aiStatus = getAIStatus();
   const demo = getDemoSnapshot();
-  let bossInbox: BossInboxItem[] = demo.bossInbox;
+  let bossInbox: BossInboxItem[] = isConfigured() ? [] : demo.bossInbox;
+  let workflowRecords: WorkspaceWorkflowRecord[] = [];
 
   if (isConfigured()) {
     try {
-      const inboxItems = await getBossInboxItems(companyId, "pending");
-
-      if (inboxItems.length > 0) {
-        bossInbox = inboxItems.map((item) => ({
-          id: item.id,
-          type: item.type as never,
-          status: item.status as never,
-          customerName: item.customer_name ?? "",
-          summary: item.summary ?? "",
-          recommendation: item.recommendation ?? "",
-          reason: item.reason ?? "",
-          confidence: item.confidence ?? 0,
-          decisionType: item.decision_type ?? "",
-          createdAt: item.created_at,
-          quote: item.suggested_price
-            ? {
-                id: `quote_${item.id}`,
-                suggestedPrice: item.suggested_price,
-                currency: item.currency ?? "USD",
-                vehicleType: item.vehicle_type ?? undefined,
-                reason: item.reason ?? "",
-                confidence: item.confidence ?? 75,
-                missingFields: [],
-                includedFees: ["Tolls", "Parking fees", "Taxes"],
-              }
-            : undefined,
-        }));
-      }
+      workflowRecords = await getWorkspaceInboxRecords(companyId);
+      bossInbox = workflowRecords.map((record) => record.inboxItem);
     } catch {
-      // DB available but tables not ready yet - fallback gracefully
-      console.warn("Supabase tables not ready, using demo data");
+      console.warn("Failed to load real workspace records");
     }
   }
+
+  const selectedRecord = workflowRecords[0];
+  const emptyBookingSummary = createBookingSummary({ tripDetails: {} });
 
   return (
     <OwnerWorkspace
       bossInbox={bossInbox}
-      tripDetails={demo.tripDetails}
-      contact={demo.contact}
-      bookingSummary={demo.bookingSummary}
+      tripDetails={selectedRecord?.tripDetails ?? (isConfigured() ? {} : demo.tripDetails)}
+      contact={selectedRecord?.contact ?? (isConfigured() ? undefined : demo.contact)}
+      bookingSummary={selectedRecord?.bookingSummary ?? (isConfigured() ? emptyBookingSummary : demo.bookingSummary)}
+      workflowRecords={workflowRecords}
       aiStatus={aiStatus}
     />
   );

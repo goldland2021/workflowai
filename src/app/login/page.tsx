@@ -70,6 +70,11 @@ export default function LoginPage() {
           {submitting ? "登录中…" : "登录"}
         </button>
         <p className="mt-4 text-center text-sm text-stone-500">
+          <Link href="/forgot-password" className="font-medium text-emerald-700 hover:underline">
+            忘记密码？
+          </Link>
+        </p>
+        <p className="mt-2 text-center text-sm text-stone-500">
           还没有账号？{" "}
           <Link href="/register" className="font-medium text-emerald-700 hover:underline">
             注册公司账号

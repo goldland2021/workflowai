@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { ConversationMessage } from "@/lib/domain/types";
+import type { ConversationMessage, TripDetails } from "@/lib/domain/types";
+import type { ExistingBossInboxItem } from "@/lib/domain/workflow-types";
 import { analyzeCustomerTurnOnServer, loadConversationHistory } from "@/lib/client/ai-workflow-api";
 
 export interface ChatMessage {
   id: string;
-  role: "customer" | "ai" | "system";
+  role: "customer" | "ai" | "owner" | "system";
   text: string;
   createdAt: string;
 }
@@ -22,25 +23,31 @@ export interface UseChatReturn {
 }
 
 const SESSION_KEY = "wai_session_id";
+const CONVERSATION_KEY = "wai_conversation_id";
 
-function getSessionId(): string {
+function scopedKey(key: string, companyId?: string): string {
+  return `${key}:${companyId || "default"}`;
+}
+
+function getSessionId(companyId?: string): string {
   if (typeof window === "undefined") return "";
-  let sid = localStorage.getItem(SESSION_KEY);
+  const key = scopedKey(SESSION_KEY, companyId);
+  let sid = localStorage.getItem(key);
   if (!sid) {
     sid = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-    localStorage.setItem(SESSION_KEY, sid);
+    localStorage.setItem(key, sid);
   }
   return sid;
 }
 
-function getConversationId(): string | null {
+function getConversationId(companyId?: string): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("wai_conversation_id");
+  return localStorage.getItem(scopedKey(CONVERSATION_KEY, companyId));
 }
 
-function setConversationId(id: string) {
+function setConversationId(id: string, companyId?: string) {
   if (typeof window === "undefined") return;
-  localStorage.setItem("wai_conversation_id", id);
+  localStorage.setItem(scopedKey(CONVERSATION_KEY, companyId), id);
 }
 
 function createWelcomeMessage(): ChatMessage {
@@ -52,25 +59,33 @@ function createWelcomeMessage(): ChatMessage {
   };
 }
 
-export function useChat(companyId: string | undefined, apiEndpoint?: string, defaultOpen = false): UseChatReturn {
+export function useChat(
+  companyId: string | undefined,
+  apiEndpoint?: string,
+  defaultOpen = false,
+  widgetToken?: string,
+  widgetOrigin?: string,
+): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([createWelcomeMessage()]);
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [isTyping, setIsTyping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tripDetails, setTripDetails] = useState<TripDetails>({});
+  const [existingBossItems, setExistingBossItems] = useState<ExistingBossInboxItem[]>([]);
   const loadedRef = useRef(false);
 
   useEffect(() => {
     if (loadedRef.current) return;
     loadedRef.current = true;
 
-    const cid = getConversationId();
+    const cid = getConversationId(companyId);
     if (!cid) return;
 
     loadConversationHistory({ conversationId: cid, companyId }, apiEndpoint).then((data) => {
       if (data.messages.length > 0) {
         const history: ChatMessage[] = data.messages.map((m) => ({
           id: m.id,
-          role: m.role as "customer" | "ai" | "system",
+          role: m.role as "customer" | "ai" | "owner" | "system",
           text: m.text,
           createdAt: m.created_at,
         }));
@@ -97,8 +112,8 @@ export function useChat(companyId: string | undefined, apiEndpoint?: string, def
     setError(null);
 
     try {
-      const sessionId = getSessionId();
-      const conversationId = getConversationId();
+      const sessionId = getSessionId(companyId);
+      const conversationId = getConversationId(companyId);
 
       // Build ConversationMessage[] for recent context
       const recentMessages: ConversationMessage[] = messages
@@ -115,19 +130,31 @@ export function useChat(companyId: string | undefined, apiEndpoint?: string, def
       const result = await analyzeCustomerTurnOnServer(
         {
           message: text.trim(),
-          currentTripDetails: {},
-          existingBossItems: [],
+          currentTripDetails: tripDetails,
+          existingBossItems,
           recentMessages: recentMessages.length > 0 ? recentMessages : undefined,
           sessionId,
           conversationId: conversationId || undefined,
           companyId,
+          widgetToken,
+          widgetOrigin,
         },
         apiEndpoint,
       );
 
       if (result.conversationId) {
-        setConversationId(result.conversationId);
+        setConversationId(result.conversationId, companyId);
       }
+
+      setTripDetails(result.tripDetails);
+      setExistingBossItems((current) => [
+        ...current,
+        ...result.bossInboxItems.map((item) => ({
+          status: item.status,
+          type: item.type,
+          event: item.event ? { eventType: item.event.eventType } : undefined,
+        })),
+      ]);
 
       const aiMsg: ChatMessage = {
         id: result.aiMessage.id || `ai_${Date.now()}`,
@@ -148,7 +175,7 @@ export function useChat(companyId: string | undefined, apiEndpoint?: string, def
     } finally {
       setIsTyping(false);
     }
-  }, [apiEndpoint, messages, isTyping, companyId]);
+  }, [apiEndpoint, messages, isTyping, companyId, tripDetails, existingBossItems, widgetToken, widgetOrigin]);
 
   return { messages, isOpen, isTyping, error, toggleOpen, sendMessage, clearError };
 }

@@ -11,20 +11,27 @@ import {
 } from "@/lib/domain/schemas";
 import type { ConversationMessage } from "@/lib/domain/types";
 import { getCurrentCompanyId } from "@/lib/auth/admin";
+import { isWidgetOriginAllowed, verifyWidgetToken } from "@/lib/auth/widget";
 import { isConfigured } from "@/lib/supabase/client";
 import {
+  bookingRowToTripDetails,
   createBossInboxItem,
   createConversation,
   getBusinessConfig,
+  getBookingByConversationId,
+  getBossInboxItemsByConversationId,
   getConversationById,
   getConversationBySessionId,
   getMessages,
+  logAiFailure,
   saveMessage,
   updateConversationContact,
   upsertBooking,
 } from "@/lib/supabase/database";
 import { findCachedReply, cacheReply } from "@/lib/ai/reply-cache";
 import { checkRateLimit, getClientIp } from "@/lib/ai/rate-limit";
+import { checkUsageLimit, consumeUsage } from "@/lib/saas/usage";
+import { getWidgetSettings } from "@/lib/supabase/saas";
 
 export const runtime = "nodejs";
 
@@ -61,6 +68,8 @@ const AnalyzeCustomerTurnRequestSchema = z.object({
   // Which company this widget visitor belongs to. Ignored for authenticated
   // admin requests, which are always scoped to the session's own company.
   companyId: z.string().optional(),
+  widgetToken: z.string().max(300).optional(),
+  widgetOrigin: z.string().max(500).optional(),
   // Test Lab preview turn - only honored for an authenticated admin session.
   simulate: z.boolean().optional(),
 });
@@ -68,10 +77,6 @@ const AnalyzeCustomerTurnRequestSchema = z.object({
 type AnalyzeCustomerTurnPayload = z.infer<typeof AnalyzeCustomerTurnRequestSchema>;
 
 export async function POST(request: Request) {
-  if (!checkRateLimit(getClientIp(request))) {
-    return Response.json({ error: "Too many requests. Please slow down." }, { status: 429 });
-  }
-
   let body: unknown;
 
   try {
@@ -104,6 +109,27 @@ export async function POST(request: Request) {
     return Response.json({ error: "companyId is required." }, { status: 400 });
   }
 
+  if (!checkRateLimit(`${companyId}:${getClientIp(request)}`)) {
+    return Response.json({ error: "Too many requests. Please slow down." }, { status: 429 });
+  }
+
+  if (!isAdmin) {
+    if (!verifyWidgetToken(companyId, payload.widgetToken)) {
+      return Response.json({ error: "Invalid widget token." }, { status: 403 });
+    }
+
+    if (isConfigured()) {
+      try {
+        const widgetSettings = await getWidgetSettings(companyId);
+        if (!isWidgetOriginAllowed(payload.widgetOrigin, widgetSettings.allowedWidgetOrigins)) {
+          return Response.json({ error: "Widget origin is not allowed." }, { status: 403 });
+        }
+      } catch {
+        return Response.json({ error: "Widget security is not configured." }, { status: 503 });
+      }
+    }
+  }
+
   // The owner's Test Lab previews how the AI would behave without creating
   // real conversations, bookings, or Boss Inbox items - and without polluting
   // the cache with test replies. Only an admin session can request this.
@@ -112,8 +138,30 @@ export async function POST(request: Request) {
   // ─── 1. Database persistence ───
   const hasDb = isConfigured() && !isSimulation;
   const canUseCache = !isSimulation;
+
+  if (hasDb) {
+    try {
+      const gate = await checkUsageLimit(companyId, "ai_messages");
+      if (!gate.allowed) {
+        return Response.json(
+          {
+            error: gate.reason === "trial_expired" ? "Trial expired." : "Usage limit reached.",
+            code: gate.reason,
+            usage: gate.summary.usage,
+            limits: gate.summary.limits,
+          },
+          { status: 402 },
+        );
+      }
+    } catch (e) {
+      console.warn("Usage gate unavailable; continuing until migration 003 is applied", e);
+    }
+  }
+
   let conversationId: string | undefined = payload.conversationId;
   let createdNewConversation = false;
+  let currentTripDetails = payload.currentTripDetails;
+  let existingBossItems = payload.existingBossItems;
   const customerMessage: ConversationMessage = {
     id: `msg_customer_${Date.now()}`,
     role: "customer",
@@ -129,6 +177,24 @@ export async function POST(request: Request) {
       const conversation = await getConversationById(conversationId, companyId);
       if (!conversation) {
         return Response.json({ error: "Conversation not found." }, { status: 404 });
+      }
+
+      try {
+        const storedBooking = await getBookingByConversationId(conversationId, companyId);
+        if (storedBooking) currentTripDetails = bookingRowToTripDetails(storedBooking);
+      } catch (e) {
+        console.warn("Failed to load stored trip details", e);
+      }
+
+      try {
+        const storedInboxItems = await getBossInboxItemsByConversationId(conversationId, companyId);
+        existingBossItems = storedInboxItems.map((item) => ({
+          status: item.status as "pending" | "approved" | "edited" | "rejected",
+          type: item.type as "quote_approval" | "event_review" | "driver_assignment" | "receipt_request" | "change_request" | "payment_coordination",
+          event: item.event_type ? { eventType: item.event_type as never } : undefined,
+        }));
+      } catch (e) {
+        console.warn("Failed to load existing inbox items", e);
       }
     } catch (e) {
       console.warn("Failed to verify conversation ownership", e);
@@ -147,6 +213,12 @@ export async function POST(request: Request) {
 
       // Save customer message to DB
       await saveMessage(conversationId, customerMessage);
+      try {
+        await consumeUsage(companyId, "ai_messages");
+        if (createdNewConversation) await consumeUsage(companyId, "conversations");
+      } catch (e) {
+        console.warn("Failed to record usage", e);
+      }
     } catch (e) {
       console.warn("Failed to save message to DB, continuing without persistence", e);
     }
@@ -174,7 +246,7 @@ export async function POST(request: Request) {
 
       return Response.json({
         aiMessage,
-        tripDetails: payload.currentTripDetails,
+        tripDetails: currentTripDetails,
         contact: null,
         detectedEvents: [],
         bossInboxItems: [],
@@ -205,13 +277,28 @@ export async function POST(request: Request) {
       ? payload.businessConfiguration
       : (isConfigured() ? await getBusinessConfig(companyId) : null) ?? airportTransferConfiguration;
 
-  const result = await analyzeCustomerTurn({
-    message: payload.message,
-    currentTripDetails: payload.currentTripDetails,
-    configuration: configToUse,
-    existingBossItems: payload.existingBossItems,
-    recentMessages: recentMessagesForAI,
-  });
+  let result;
+  try {
+    result = await analyzeCustomerTurn({
+      message: payload.message,
+      currentTripDetails,
+      configuration: configToUse,
+      existingBossItems,
+      recentMessages: recentMessagesForAI,
+    });
+  } catch (error) {
+    const failureMessage = error instanceof Error ? error.message : "AI analysis failed";
+    if (hasDb) {
+      await logAiFailure({
+        companyId,
+        conversationId,
+        stage: "analyze_customer_turn",
+        message: failureMessage,
+        provider: "workflow-ai",
+      }).catch(() => undefined);
+    }
+    return Response.json({ error: "AI 暂时不可用，请稍后重试。" }, { status: 503 });
+  }
 
   let bossInboxItems = result.bossInboxItems;
 
@@ -233,12 +320,20 @@ export async function POST(request: Request) {
     if (result.contact) {
       try {
         await updateConversationContact(conversationId, companyId, result.contact);
+        await consumeUsage(companyId, "leads");
       } catch (e) {
-        console.warn("Failed to persist captured contact", e);
+        console.warn("Failed to persist captured contact or usage", e);
       }
     }
 
     if (result.bossInboxItems.length > 0) {
+      if (result.bossInboxItems.some((item) => item.type === "quote_approval")) {
+        try {
+          await consumeUsage(companyId, "quote_suggestions");
+        } catch (e) {
+          console.warn("Failed to record quote usage", e);
+        }
+      }
       try {
         bossInboxItems = await Promise.all(
           result.bossInboxItems.map(async (item) => {

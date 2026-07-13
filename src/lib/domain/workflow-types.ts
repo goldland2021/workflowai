@@ -22,6 +22,8 @@ export interface AnalyzeCustomerTurnRequest {
   sessionId?: string;       // browser session for persistence
   conversationId?: string;  // existing conversation to continue
   companyId?: string;       // which company this conversation belongs to (widget visitors only; admin requests use the session's company)
+  widgetToken?: string;     // signed public widget credential
+  widgetOrigin?: string;    // top-level site origin captured by the embed script
   simulate?: boolean;       // Test Lab preview turn (admin only) - skips DB persistence and the reply cache
 }
 

@@ -6,6 +6,8 @@ type QuoteEditValue = QuoteSuggestion[QuoteEditField];
 
 export function BossInboxCard({
   item,
+  selected = false,
+  onSelect,
   onUpdate,
   editingId,
   editForm,
@@ -15,6 +17,8 @@ export function BossInboxCard({
   onEditFormChange,
 }: {
   item: BossInboxItem;
+  selected?: boolean;
+  onSelect?: (id: string) => void;
   onUpdate: (id: string, status: BossInboxItem["status"]) => void;
   editingId?: string | null;
   editForm?: Partial<QuoteSuggestion>;
@@ -27,7 +31,7 @@ export function BossInboxCard({
   const isCurrentlyEditing = editingId === item.id;
 
   return (
-    <article className="rounded-lg border border-stone-300 bg-white p-3">
+    <article className={`rounded-lg border bg-white p-3 ${selected ? "border-emerald-700 ring-1 ring-emerald-700/20" : "border-stone-300"}`}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-stone-950">
@@ -44,6 +48,15 @@ export function BossInboxCard({
         </span>
       </div>
       <p className="mt-3 text-sm leading-6 text-stone-700">{item.summary}</p>
+      {onSelect && (
+        <button
+          className="mt-2 text-xs font-semibold text-emerald-800 hover:underline"
+          onClick={() => onSelect(item.id)}
+          type="button"
+        >
+          查看客户详情
+        </button>
+      )}
       <div className="mt-3 rounded-md bg-stone-50 p-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-stone-950">
           <ArrowRight size={15} aria-hidden="true" />

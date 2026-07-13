@@ -1,7 +1,20 @@
 ﻿import { Clock } from "lucide-react";
+import { Check, Copy, Send } from "lucide-react";
 import type { BookingSummary } from "@/lib/domain/types";
 
-export function BookingSummaryView({ bookingSummary }: { bookingSummary: BookingSummary }) {
+export function BookingSummaryView({
+  bookingSummary,
+  onCopyConfirmation,
+  confirmationCopied = false,
+  onSendConfirmation,
+  confirmationSent = false,
+}: {
+  bookingSummary: BookingSummary;
+  onCopyConfirmation?: () => void;
+  confirmationCopied?: boolean;
+  onSendConfirmation?: () => void;
+  confirmationSent?: boolean;
+}) {
   const serviceMap: Record<string, string> = {
     airport_pickup: "机场接机",
     airport_dropoff: "机场送机",
@@ -103,7 +116,31 @@ export function BookingSummaryView({ bookingSummary }: { bookingSummary: Booking
       </div>
 
       <div className="border-t border-stone-200 pt-3">
-        <p className="text-xs font-semibold uppercase text-stone-500">客户消息</p>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs font-semibold uppercase text-stone-500">客户消息</p>
+          <div className="flex items-center gap-2">
+            {onCopyConfirmation && (
+              <button
+                className="inline-flex items-center gap-1 rounded border border-stone-300 px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50"
+                onClick={onCopyConfirmation}
+                type="button"
+              >
+                {confirmationCopied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
+                {confirmationCopied ? "已复制" : "复制确认单"}
+              </button>
+            )}
+            {onSendConfirmation && (
+              <button
+                className="inline-flex items-center gap-1 rounded bg-emerald-800 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-900"
+                onClick={onSendConfirmation}
+                type="button"
+              >
+                {confirmationSent ? <Check size={13} aria-hidden="true" /> : <Send size={13} aria-hidden="true" />}
+                {confirmationSent ? "已记录" : "记录已发送"}
+              </button>
+            )}
+          </div>
+        </div>
         <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-stone-200 bg-white p-3 text-xs leading-5 text-stone-800">
           {bookingSummary.confirmationText}
         </pre>

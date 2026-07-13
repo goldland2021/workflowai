@@ -11,10 +11,12 @@ import type {
   QuoteSuggestion,
   ReceiptRequest,
   TripDetails,
+  WorkspaceWorkflowRecord,
 } from "@/lib/domain/types";
 import type { AIStatus } from "@/lib/ai/status-types";
 import { BossInboxCard } from "./owner-workspace/boss-inbox-card";
 import { BookingSummaryView } from "./owner-workspace/booking-summary-view";
+import { ChatBubble } from "./owner-workspace/chat-bubble";
 import { FulfillmentTracker } from "./owner-workspace/fulfillment-tracker";
 import { Panel, Metric, StatusPill } from "./owner-workspace/panel";
 import { WorkspaceHeader } from "./owner-workspace/workspace-header";
@@ -27,6 +29,7 @@ interface OwnerWorkspaceProps {
   tripDetails: TripDetails;
   contact?: CapturedContact;
   bookingSummary: BookingSummary;
+  workflowRecords?: WorkspaceWorkflowRecord[];
   aiStatus: AIStatus;
 }
 
@@ -104,6 +107,7 @@ export function OwnerWorkspace({
   tripDetails: initialTripDetails,
   contact: initialContact,
   bookingSummary: initialBookingSummary,
+  workflowRecords = [],
   aiStatus,
 }: OwnerWorkspaceProps) {
   const [bossInbox, setBossInbox] = useState<BossInboxItem[]>(initialBossInbox);
@@ -115,8 +119,31 @@ export function OwnerWorkspace({
 
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editQuote, setEditQuote] = useState<Partial<QuoteSuggestion>>({});
+  const [selectedRecordId, setSelectedRecordId] = useState<string | null>(
+    workflowRecords[0]?.inboxItem.id ?? initialBossInbox[0]?.id ?? null,
+  );
+  const [isSavingFulfillment, setIsSavingFulfillment] = useState(false);
+  const [confirmationCopied, setConfirmationCopied] = useState(false);
+  const [confirmationSent, setConfirmationSent] = useState(false);
+
+  const selectedRecord = workflowRecords.find((record) => record.inboxItem.id === selectedRecordId);
+  const selectedInboxItem = bossInbox.find((item) => item.id === selectedRecordId);
+  const allowLocalDrafts = workflowRecords.length === 0 && initialBossInbox.length > 0;
 
   useEffect(() => {
+    if (!selectedRecord) return;
+    queueMicrotask(() => {
+      setTripDetails(selectedRecord.tripDetails);
+      setContact(selectedRecord.contact);
+      setDriverDetails(selectedRecord.bookingSummary.driverDetails ?? {});
+      setPaymentMethod(selectedRecord.bookingSummary.paymentMethod ?? "Cash to driver after service");
+      setReceiptRequest(selectedRecord.bookingSummary.receiptRequest ?? { needed: false });
+      setConfirmationSent(false);
+    });
+  }, [selectedRecord]);
+
+  useEffect(() => {
+    if (!allowLocalDrafts) return;
     queueMicrotask(() => {
       const saved = readSavedDashboard();
       if (saved.tripDetails) setTripDetails(saved.tripDetails);
@@ -125,9 +152,10 @@ export function OwnerWorkspace({
       if (saved.paymentMethod) setPaymentMethod(saved.paymentMethod);
       if (saved.receiptRequest) setReceiptRequest(saved.receiptRequest);
     });
-  }, []);
+  }, [allowLocalDrafts]);
 
   useEffect(() => {
+    if (!allowLocalDrafts) return;
     try {
       localStorage.setItem(
         STORAGE_KEY,
@@ -136,16 +164,20 @@ export function OwnerWorkspace({
     } catch (e) {
       console.warn("Failed to persist dashboard state", e);
     }
-  }, [tripDetails, contact, driverDetails, paymentMethod, receiptRequest]);
+  }, [allowLocalDrafts, tripDetails, contact, driverDetails, paymentMethod, receiptRequest]);
 
-  async function persistBossInboxStatus(id: string, status: BossInboxItem["status"]) {
+  async function persistBossInboxStatus(
+    id: string,
+    status: BossInboxItem["status"],
+    quote?: QuoteSuggestion,
+  ) {
     if (!["approved", "edited", "rejected"].includes(status)) return;
 
     try {
       await fetch("/api/inbox", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, status }),
+        body: JSON.stringify({ id, status, quote }),
       });
     } catch (e) {
       console.warn("Failed to persist Boss Inbox status", e);
@@ -153,8 +185,8 @@ export function OwnerWorkspace({
   }
 
   const approvedQuote = useMemo(
-    () => bossInbox.find((item) => item.status === "approved" && item.quote)?.quote as QuoteSuggestion | undefined,
-    [bossInbox],
+    () => selectedInboxItem?.status === "approved" ? selectedInboxItem.quote : undefined,
+    [selectedInboxItem],
   );
 
   const bookingSummary: BookingSummary = useMemo(
@@ -169,7 +201,7 @@ export function OwnerWorkspace({
 
   function updateBossItem(id: string, status: BossInboxItem["status"]) {
     setBossInbox((current) => current.map((i) => (i.id === id ? { ...i, status } : i)));
-    void persistBossInboxStatus(id, status);
+    void persistBossInboxStatus(id, status, bossInbox.find((item) => item.id === id)?.quote);
   }
 
   function startEdit(id: string) {
@@ -210,7 +242,7 @@ export function OwnerWorkspace({
     setBossInbox((current) =>
       current.map((i) => (i.id === id ? { ...i, quote: updatedQuote, status: nextStatus } : i)),
     );
-    void persistBossInboxStatus(id, nextStatus);
+    void persistBossInboxStatus(id, nextStatus, updatedQuote);
 
     setEditingItemId(null);
     setEditQuote({});
@@ -222,6 +254,50 @@ export function OwnerWorkspace({
 
   function updateReceiptRequest(changes: Partial<ReceiptRequest>) {
     setReceiptRequest((current) => ({ ...current, ...changes }));
+  }
+
+  async function saveFulfillment() {
+    const bookingId = selectedRecord?.bookingId;
+    if (!bookingId) return;
+
+    setIsSavingFulfillment(true);
+    try {
+      await fetch("/api/booking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookingId, driverDetails, paymentMethod, receiptRequest }),
+      });
+    } catch (e) {
+      console.warn("Failed to persist booking fulfillment", e);
+    } finally {
+      setIsSavingFulfillment(false);
+    }
+  }
+
+  async function copyConfirmation() {
+    try {
+      await navigator.clipboard.writeText(bookingSummary.confirmationText ?? "");
+      setConfirmationCopied(true);
+      window.setTimeout(() => setConfirmationCopied(false), 2000);
+    } catch (e) {
+      console.warn("Failed to copy booking confirmation", e);
+    }
+  }
+
+  async function recordConfirmationSent() {
+    const bookingId = selectedRecord?.bookingId;
+    if (!bookingId) return;
+
+    try {
+      const response = await fetch("/api/booking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookingId, sendConfirmation: true }),
+      });
+      if (response.ok) setConfirmationSent(true);
+    } catch (e) {
+      console.warn("Failed to record booking confirmation", e);
+    }
   }
 
   return (
@@ -249,6 +325,8 @@ export function OwnerWorkspace({
                     <BossInboxCard
                       key={item.id}
                       item={item}
+                      selected={item.id === selectedRecordId}
+                      onSelect={() => setSelectedRecordId(item.id)}
                       onUpdate={updateBossItem}
                       editingId={editingItemId}
                       editForm={editQuote}
@@ -260,15 +338,33 @@ export function OwnerWorkspace({
                   ))
                 ) : (
                   <p className="text-sm leading-6 text-stone-600">
-                    暂无待处理事项。去「对话测试实验室」试试你训练的 AI 吧。
+                    暂无待处理事项。客户提交报价或特殊请求后，会出现在这里。
                   </p>
                 )}
               </div>
             </Panel>
 
             <aside className="flex min-w-0 flex-col gap-4">
+              {selectedRecord && (
+                <Panel title="客户对话" icon={<Inbox size={18} aria-hidden="true" />}>
+                  <div className="max-h-80 space-y-2 overflow-y-auto">
+                    {selectedRecord.messages.length > 0 ? (
+                      selectedRecord.messages.map((message) => <ChatBubble key={message.id} message={message} />)
+                    ) : (
+                      <p className="text-sm leading-6 text-stone-600">暂无对话内容。</p>
+                    )}
+                  </div>
+                </Panel>
+              )}
+
               <Panel title="预订确认" icon={<ClipboardCheck size={18} aria-hidden="true" />}>
-                <BookingSummaryView bookingSummary={bookingSummary} />
+                <BookingSummaryView
+                  bookingSummary={bookingSummary}
+                  onCopyConfirmation={copyConfirmation}
+                  confirmationCopied={confirmationCopied}
+                  onSendConfirmation={selectedRecord?.bookingId ? recordConfirmationSent : undefined}
+                  confirmationSent={confirmationSent}
+                />
               </Panel>
 
               <Panel title="履约跟踪" icon={<Car size={18} aria-hidden="true" />}>
@@ -279,6 +375,8 @@ export function OwnerWorkspace({
                   onDriverChange={updateDriverDetail}
                   onPaymentMethodChange={setPaymentMethod}
                   onReceiptChange={updateReceiptRequest}
+                  onSave={saveFulfillment}
+                  isSaving={isSavingFulfillment}
                 />
               </Panel>
             </aside>

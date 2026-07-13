@@ -241,3 +241,13 @@ export interface DemoSnapshot {
   bossInbox: BossInboxItem[];
   bookingSummary: BookingSummary;
 }
+
+export interface WorkspaceWorkflowRecord {
+  inboxItem: BossInboxItem;
+  conversationId?: string;
+  bookingId?: string;
+  tripDetails: TripDetails;
+  contact?: CapturedContact;
+  bookingSummary: BookingSummary;
+  messages: ConversationMessage[];
+}

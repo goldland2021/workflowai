@@ -1,8 +1,11 @@
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
+import { isConfigured } from "@/lib/supabase/client";
+import { isAuthSessionActive } from "@/lib/supabase/saas";
 
 export const sessionCookieName = "ai_employee_session";
 const sessionMaxAgeMs = 1000 * 60 * 60 * 24;
+export const sessionMaxAgeSeconds = 60 * 60 * 24;
 
 function getSessionSecret(): string {
   if (process.env.SESSION_SECRET) return process.env.SESSION_SECRET;
@@ -44,5 +47,19 @@ export function verifySession(token: string | undefined): string | null {
 
 export async function getCurrentCompanyId(): Promise<string | null> {
   const cookieStore = await cookies();
-  return verifySession(cookieStore.get(sessionCookieName)?.value);
+  const token = cookieStore.get(sessionCookieName)?.value;
+  const companyId = verifySession(token);
+  if (!companyId || !isConfigured()) return companyId;
+
+  try {
+    return await isAuthSessionActive(companyId, token as string) ? companyId : null;
+  } catch {
+    // Keep existing installs usable until the SaaS migration is applied.
+    return companyId;
+  }
+}
+
+export async function getCurrentSessionToken(): Promise<string | null> {
+  const cookieStore = await cookies();
+  return cookieStore.get(sessionCookieName)?.value ?? null;
 }
