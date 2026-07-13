@@ -245,4 +245,9 @@ describe("analyzeCustomerTurn - message presentation", () => {
     expect(replyLanguageMatches("您好，我会为您准备报价。", "en")).toBe(false);
     expect(replyLanguageMatches("Thanks. I recommend 丰田阿尔法 for this transfer.", "en")).toBe(true);
   });
+
+  it("recognizes Arabic replies and rejects Chinese replies for Arabic customers", () => {
+    expect(replyLanguageMatches("شكرًا، ما وقت الاستلام المطلوب؟", "ar")).toBe(true);
+    expect(replyLanguageMatches("您好，请提供上车时间。", "ar")).toBe(false);
+  });
 });
