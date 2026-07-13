@@ -69,6 +69,7 @@ ${params.aiBoundaries.map((b) => `- ${b}`).join("\n") || "（无）"}
 - 如果信息已经足够，告诉客户你会为老板准备报价建议`
 
     : `You are the professional AI customer service agent of "${params.companyName}", responsible for airport transfer services.
+The customer's latest message is in English. Reply only in English, even when company names, vehicle names, payment methods, or FAQ content are written in Chinese.
 
 Company info:
 - Service area: ${params.serviceArea || "City center and airport routes"}

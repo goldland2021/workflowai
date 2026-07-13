@@ -5,6 +5,31 @@ import type {
   BusinessConfiguration, ConversationMessage
 } from '../domain/types';
 
+export function replyLanguageMatches(text: string, lang: "zh" | "en"): boolean {
+  const cjkCount = text.match(/[\u3400-\u9fff]/gu)?.length ?? 0;
+  const latinCount = text.match(/[a-z]/giu)?.length ?? 0;
+  return lang === "zh" ? cjkCount > 0 : latinCount >= cjkCount;
+}
+
+function fallbackReply(params: {
+  lang: "zh" | "en";
+  contact?: CapturedContact;
+  quote?: QuoteSuggestion;
+  missingFields: TripFieldKey[];
+}): string {
+  const { lang, contact, quote, missingFields } = params;
+  if (lang === 'en') {
+    if (contact) return `Thanks, I have saved your ${contact.method}. I will prepare the quote suggestion for the owner.`;
+    if (quote) return `I have enough information to prepare a quote suggestion for the owner. What is the best WhatsApp, Telegram, or email for updates?`;
+    if (missingFields.length > 0) return `Thanks. Please provide the ${missingFields[0]} details.`;
+    return `Thank you. I will prepare the next step for the owner.`;
+  }
+  if (contact) return `已记录您的${contact.method}，我会为老板准备报价建议。`;
+  if (quote) return `信息已足够，我会为老板准备报价建议。方便提供 WhatsApp、Telegram 或邮箱接收更新吗？`;
+  if (missingFields.length > 0) return `好的，请提供${missingFields[0]}相关信息。`;
+  return `谢谢您的信息，我们会继续跟进。`;
+}
+
 export async function generateAiReplyWithAI(params: {
   customerMessage: string;
   tripDetails: TripDetails;
@@ -64,18 +89,12 @@ export async function generateAiReplyWithAI(params: {
   });
 
   try {
-    return await generateReply(prompt, system, temperature);
+    const generated = await generateReply(prompt, system, temperature);
+    if (replyLanguageMatches(generated, lang)) return generated;
+    console.warn('LLM reply language did not match the latest customer message, using fallback');
   } catch {
     console.warn('LLM reply generation failed, using fallback');
-    if (lang === 'en') {
-      if (contact) return `Thanks, I have saved your ${contact.method}.`;
-      if (quote) return `I have enough information to prepare a quote suggestion for the owner.`;
-      if (missingFields.length > 0) return `Thanks. Please provide the ${missingFields[0]} details.`;
-      return `Thank you. We will continue with the next step.`;
-    }
-    if (contact) return `已记录您的${contact.method}。`;
-    if (quote) return `信息已足够，我会为老板准备报价建议。`;
-    if (missingFields.length > 0) return `好的，请提供${missingFields[0]}相关信息。`;
-    return `谢谢您的信息，我们会继续跟进。`;
   }
+
+  return fallbackReply({ lang, contact, quote, missingFields });
 }

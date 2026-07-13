@@ -202,11 +202,16 @@ export async function analyzeCustomerTurn(params: {
 
   if (hasRealAI) {
     // Prefer real LLM with structured outputs (per project architecture rules)
-    [tripDetails, contact, detectedEvents] = await Promise.all([
+    const [aiTripDetails, aiContact, aiDetectedEvents] = await Promise.all([
       extractTripDetailsWithAI(params.message, params.currentTripDetails, params.configuration),
       extractContactWithAI(params.message),
       detectEventsWithAI(params.message, params.configuration),
     ]);
+    // Keep critical booking fields deterministic even when structured model
+    // extraction is temporarily unavailable or returns an incomplete delta.
+    tripDetails = mergeTripDetails(aiTripDetails, params.message);
+    contact = aiContact;
+    detectedEvents = aiDetectedEvents;
   } else {
     // Fallback to original rule-based logic
     tripDetails = mergeTripDetails(params.currentTripDetails, params.message);
@@ -299,6 +304,11 @@ function mergeTripDetails(current: TripDetails, message: string): TripDetails {
   if (route) {
     next.pickupLocation = cleanText(route[1]);
     next.dropoffLocation = cleanText(route[2]);
+
+    const pickupIsAirport = /airport|narita|haneda|kansai/i.test(route[1]);
+    const dropoffIsAirport = /airport|narita|haneda|kansai/i.test(route[2]);
+    if (pickupIsAirport && !dropoffIsAirport) next.serviceType = "airport_pickup";
+    if (dropoffIsAirport && !pickupIsAirport) next.serviceType = "airport_dropoff";
   }
 
   if (!next.pickupLocation && pickupOnly) {

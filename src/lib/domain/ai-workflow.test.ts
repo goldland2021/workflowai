@@ -15,6 +15,7 @@ vi.mock("../ai/client", () => ({
 import { analyzeCustomerTurn, filterDetectedEventsForMessage } from "./ai-workflow";
 import { airportTransferConfiguration } from "./airport-transfer";
 import type { DetectedEvent, TripDetails } from "./types";
+import { replyLanguageMatches } from "../ai/reply";
 
 // These tests exercise the rule-based fallback path (no LLM env vars are set
 // in the test environment, so `hasRealAI` is false and analyzeCustomerTurn
@@ -191,6 +192,27 @@ describe("analyzeCustomerTurn - multi-turn trip state", () => {
     expect(secondTurn.tripDetails.dropoffLocation).toBe("city hotel");
     expect(secondTurn.tripDetails.time).toBe("18:30");
   });
+
+  it("extracts a complete English airport route without depending on model output", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "Private transfer from Narita Airport Terminal 1 to Shinjuku on July 20 at 3:00 PM for 2 passengers with 2 suitcases",
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails).toMatchObject({
+      serviceType: "airport_pickup",
+      pickupLocation: "Narita Airport Terminal 1",
+      dropoffLocation: "Shinjuku",
+      airport: "Narita",
+      terminal: "Terminal 1",
+      date: "July 20",
+      time: "3:00 PM",
+      passengerCount: 2,
+      luggageCount: 2,
+    });
+  });
 });
 
 describe("analyzeCustomerTurn - message presentation", () => {
@@ -215,5 +237,10 @@ describe("analyzeCustomerTurn - message presentation", () => {
 
     expect(result.aiMessage.text).toMatch(/Got it|Thanks|What is|WhatsApp|Telegram|email/i);
     expect(result.aiMessage.text).not.toMatch(/[\u3400-\u9fff]/u);
+  });
+
+  it("rejects a mostly Chinese reply for an English customer", () => {
+    expect(replyLanguageMatches("您好，我会为您准备报价。", "en")).toBe(false);
+    expect(replyLanguageMatches("Thanks. I recommend 丰田阿尔法 for this transfer.", "en")).toBe(true);
   });
 });
