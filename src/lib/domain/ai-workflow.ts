@@ -294,6 +294,7 @@ function mergeTripDetails(
   const lower = message.toLowerCase();
   const next: TripDetails = { ...current };
   const route = message.match(/from\s+(.+?)\s+to\s+(.+?)(?:[.,]|$|\s+on\s+|\s+at\s+|\s+with\s+|\s+for\s+)/i);
+  const chineseRoute = message.match(/(?:从|從|由)\s*(.+?)\s*(?:到|前往|去)\s*(.+?)(?=[，。,.]|$)/u);
   const fromOnly = message.match(/(?:collect\s+\w+\s+\w+\s+from|collect\s+\w+\s+from|from)\s+(.+?)(?:\s+at\s+|\s+on\s+|[.,]|$)/i);
   const travelingTo = message.match(/(?:traveling|travelling|going)\s+to\s+(.+?)(?:[.,]|$)/i);
   const dropOnly = message.match(/drop(?:\s|-)?off\s+(?:is|at|to)?\s*([a-z0-9\s'-]+)(?:[.,]|$)/i);
@@ -305,6 +306,8 @@ function mergeTripDetails(
   const numberPattern = "\\d+|one|two|three|four|five|six|seven|eight|nine|ten";
   const passengers = message.match(new RegExp(`\\b(${numberPattern})\\s*(?:passengers?|people|pax|persons?|adults?)\\b`, "i"));
   const luggage = message.match(new RegExp(`\\b(${numberPattern})\\s*(?:small|medium|large|sized|medium-sized|large-sized|small-sized|\\s|-)*(?:bags?|luggage|suitcases?)\\b`, "i"));
+  const chinesePassengers = message.match(/(\d+)\s*(?:位|名|个|個)?\s*(?:乘客|客人|人)/u);
+  const chineseLuggage = message.match(/(\d+)\s*(?:件|个|個)?\s*(?:行李箱|行李|箱)/u);
   const terminal = message.match(new RegExp(`\\bterminal\\s*(${numberPattern})\\b`, "i"));
 
   if (route) {
@@ -313,6 +316,14 @@ function mergeTripDetails(
 
     const pickupIsAirport = /airport|narita|haneda|kansai/i.test(route[1]);
     const dropoffIsAirport = /airport|narita|haneda|kansai/i.test(route[2]);
+    if (pickupIsAirport && !dropoffIsAirport) next.serviceType = "airport_pickup";
+    if (dropoffIsAirport && !pickupIsAirport) next.serviceType = "airport_dropoff";
+  } else if (chineseRoute) {
+    next.pickupLocation = cleanText(chineseRoute[1]);
+    next.dropoffLocation = cleanText(chineseRoute[2]);
+
+    const pickupIsAirport = /机场|機場|成田|羽田|关西|關西/u.test(chineseRoute[1]);
+    const dropoffIsAirport = /机场|機場|成田|羽田|关西|關西/u.test(chineseRoute[2]);
     if (pickupIsAirport && !dropoffIsAirport) next.serviceType = "airport_pickup";
     if (dropoffIsAirport && !pickupIsAirport) next.serviceType = "airport_dropoff";
   }
@@ -356,11 +367,11 @@ function mergeTripDetails(
     next.serviceType = "city_transfer";
   }
 
-  if (lower.includes("narita")) {
+  if (lower.includes("narita") || message.includes("成田")) {
     next.airport = "Narita";
-  } else if (lower.includes("haneda")) {
+  } else if (lower.includes("haneda") || message.includes("羽田")) {
     next.airport = "Haneda";
-  } else if (lower.includes("kansai")) {
+  } else if (lower.includes("kansai") || /关西|關西/u.test(message)) {
     next.airport = "Kansai";
   }
 
@@ -374,7 +385,9 @@ function mergeTripDetails(
     next.date = "Today";
   } else {
     const date = message.match(/\b(?:\d{1,2}\s+)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*(?:\s+\d{1,2})?\b|\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b/i);
+    const chineseDate = message.match(/(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*[日号號]/u);
     if (date) next.date = date[0];
+    else if (chineseDate) next.date = `${chineseDate[1] ? `${chineseDate[1]}年` : ""}${chineseDate[2]}月${chineseDate[3]}日`;
   }
 
   if (time) {
@@ -386,11 +399,13 @@ function mergeTripDetails(
     next.flightTime = trustedCurrent.flightTime;
   }
   if (passengers) next.passengerCount = parseNumberToken(passengers[1]);
+  else if (chinesePassengers) next.passengerCount = Number(chinesePassengers[1]);
   if (luggage) next.luggageCount = parseNumberToken(luggage[1]);
+  else if (chineseLuggage) next.luggageCount = Number(chineseLuggage[1]);
 
-  if (lower.includes("van") || lower.includes("minivan") || lower.includes("海狮") || lower.includes("hiace")) {
+  if (lower.includes("van") || lower.includes("minivan") || lower.includes("海狮") || lower.includes("海獅") || lower.includes("hiace")) {
     next.vehiclePreference = "丰田海狮";
-  } else if (lower.includes("alphard") || lower.includes("阿尔法")) {
+  } else if (lower.includes("alphard") || lower.includes("阿尔法") || lower.includes("阿爾法")) {
     next.vehiclePreference = "丰田阿尔法";
   } else if (lower.includes("suv")) {
     next.vehiclePreference = "SUV";
