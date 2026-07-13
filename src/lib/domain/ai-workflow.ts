@@ -210,7 +210,7 @@ export async function analyzeCustomerTurn(params: {
     // Keep critical booking fields deterministic even when structured model
     // extraction is temporarily unavailable or returns an incomplete delta.
     tripDetails = mergeTripDetails(aiTripDetails, params.message, params.currentTripDetails);
-    contact = aiContact;
+    contact = aiContact ?? extractContact(params.message);
     detectedEvents = aiDetectedEvents;
   } else {
     // Fallback to original rule-based logic
