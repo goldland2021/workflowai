@@ -215,6 +215,26 @@ describe("analyzeCustomerTurn - multi-turn trip state", () => {
     expect(result.tripDetails.flightNumber).toBeUndefined();
     expect(result.tripDetails.flightTime).toBeUndefined();
   });
+
+  it("extracts Chinese route, date, passenger, luggage, airport, and vehicle fields", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "你好，我想在8月15日安排5位乘客从成田机场到东京新宿酒店，有4件行李，想要阿尔法，可以吗？",
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails).toMatchObject({
+      serviceType: "airport_pickup",
+      pickupLocation: "成田机场",
+      dropoffLocation: "东京新宿酒店",
+      airport: "Narita",
+      date: "8月15日",
+      passengerCount: 5,
+      luggageCount: 4,
+      vehiclePreference: "丰田阿尔法",
+    });
+  });
 });
 
 describe("analyzeCustomerTurn - message presentation", () => {
