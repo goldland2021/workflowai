@@ -321,9 +321,10 @@ export function getFastFaqReply(
 
   for (const intent of faqIntents) {
     if (!intent.message.test(compact)) continue;
-    const faq = configuration.faq.find(
-      (item) => intent.faq.test(item.id) || intent.faq.test(item.question),
-    );
+    // FAQ IDs may survive owner edits and no longer describe their current
+    // content. Match only the visible question so stale seed IDs cannot cause
+    // a fast but incorrect answer.
+    const faq = configuration.faq.find((item) => intent.faq.test(item.question));
     if (faq) return faq.answer;
   }
 
