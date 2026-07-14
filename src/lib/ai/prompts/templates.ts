@@ -1,5 +1,5 @@
 import "server-only";
-import type { BusinessConfiguration } from "@/lib/domain/types";
+import type { BusinessConfiguration, ConversationMessage } from "@/lib/domain/types";
 
 export type PromptLang = "zh" | "en" | "ar";
 
@@ -12,15 +12,53 @@ export function detectLang(config?: BusinessConfiguration): PromptLang {
   return "en";
 }
 
-/** Prefer the language used in the latest customer turn over the company's
- * list of supported languages. The configuration is only a fallback for
- * messages that contain no useful language signal (for example, an emoji).
+/** Detect natural-language content while ignoring contact details and other
+ * tokens that contain Latin letters but do not indicate an English speaker.
  */
+export function detectMessageLang(message: string): PromptLang | undefined {
+  const naturalText = message
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu, " ")
+    .replace(/https?:\/\/\S+|www\.\S+/giu, " ")
+    .replace(/@[a-z0-9_]{4,}/giu, " ")
+    .replace(/(?:whatsapp|telegram|email|e-mail|邮箱|郵箱)\s*[:：]?/giu, " ")
+    .replace(/\+?[\d\s().-]{7,}/gu, " ")
+    .trim();
+
+  if (/[\u3400-\u9fff]/u.test(naturalText)) return "zh";
+  if (/[\u0600-\u06ff]/u.test(naturalText)) return "ar";
+  if (/[a-z]{2,}/iu.test(naturalText)) return "en";
+  return undefined;
+}
+
+/** Detect a single turn, falling back to the company's configured language. */
 export function detectCustomerLang(message: string, config?: BusinessConfiguration): PromptLang {
-  if (/[\u3400-\u9fff]/u.test(message)) return "zh";
-  if (/[\u0600-\u06ff]/u.test(message)) return "ar";
-  if (/[a-z]/iu.test(message)) return "en";
-  return detectLang(config);
+  return detectMessageLang(message) ?? detectLang(config);
+}
+
+/** Resolve and lock the customer's language for the whole conversation.
+ * A persisted language wins. For older conversations without one, the first
+ * meaningful customer turn in history wins. Contact-only turns never switch it.
+ */
+export function resolveConversationLang(params: {
+  customerMessage: string;
+  recentMessages?: ConversationMessage[];
+  config?: BusinessConfiguration;
+  lockedLanguage?: PromptLang;
+  languageHint?: PromptLang;
+}): PromptLang {
+  if (params.lockedLanguage) return params.lockedLanguage;
+
+  for (const message of params.recentMessages ?? []) {
+    if (message.role !== "customer") continue;
+    const detected = detectMessageLang(message.text);
+    if (detected) return detected;
+  }
+
+  return (
+    detectMessageLang(params.customerMessage) ??
+    params.languageHint ??
+    detectLang(params.config)
+  );
 }
 
 // ─── 客服回复模板 ───

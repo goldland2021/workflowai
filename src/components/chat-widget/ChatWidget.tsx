@@ -68,6 +68,7 @@ export default function ChatWidget({ title = "WorkflowAI", subtitle, defaultOpen
     defaultOpen,
     widgetToken,
     widgetOrigin,
+    languageKey,
     copy.welcome(title),
     copy.error,
   );

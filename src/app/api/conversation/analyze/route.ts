@@ -26,12 +26,14 @@ import {
   logAiFailure,
   saveMessage,
   updateConversationContact,
+  updateConversationLanguage,
   upsertBooking,
 } from "@/lib/supabase/database";
 import { findCachedReply, cacheReply } from "@/lib/ai/reply-cache";
 import { checkDistributedRateLimit, getClientIp } from "@/lib/ai/rate-limit";
 import { checkUsageLimit, consumeUsage } from "@/lib/saas/usage";
 import { getWidgetSettings } from "@/lib/supabase/saas";
+import { resolveConversationLang } from "@/lib/ai/prompts/templates";
 
 export const runtime = "nodejs";
 
@@ -61,6 +63,7 @@ const AnalyzeCustomerTurnRequestSchema = z.object({
   currentTripDetails: TripDetailsRequestSchema,
   existingBossItems: z.array(ExistingBossInboxItemSchema).max(50),
   recentMessages: z.array(RecentMessageRequestSchema).max(8).optional(),
+  languageHint: z.enum(["zh", "en", "ar"]).optional(),
   businessConfiguration: BusinessConfigurationSchema.optional(),
   // ─── Persistence fields ───
   sessionId: z.string().optional(),
@@ -163,6 +166,7 @@ export async function POST(request: Request) {
   let createdNewConversation = false;
   let currentTripDetails = payload.currentTripDetails;
   let existingBossItems = payload.existingBossItems;
+  let persistedCustomerLanguage: "zh" | "en" | "ar" | undefined;
   const customerMessage: ConversationMessage = {
     id: `msg_customer_${Date.now()}`,
     role: "customer",
@@ -186,6 +190,7 @@ export async function POST(request: Request) {
     ]);
 
     configToUse = persistedConfig ?? airportTransferConfiguration;
+    persistedCustomerLanguage = conversation?.customer_language ?? undefined;
     if (gate && !gate.allowed) {
       return Response.json(
         {
@@ -227,12 +232,29 @@ export async function POST(request: Request) {
     }
   }
 
+  const recentMessagesForAI = payload.recentMessages?.map(
+    (message, index): ConversationMessage => ({
+      id: message.id ?? `hist_${index}`,
+      role: message.role,
+      text: message.text,
+      createdAt: message.createdAt ?? "",
+      channel: message.channel ?? "website_widget",
+    }),
+  );
+  const customerLanguage = resolveConversationLang({
+    customerMessage: payload.message,
+    recentMessages: recentMessagesForAI,
+    config: configToUse,
+    lockedLanguage: persistedCustomerLanguage,
+    languageHint: payload.languageHint,
+  });
+
   if (hasDb) {
     try {
       // Auto-create conversation if needed
       if (!conversationId) {
         const sessionId = payload.sessionId || `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        conversationId = await createConversation(sessionId, companyId);
+        conversationId = await createConversation(sessionId, companyId, customerLanguage);
         createdNewConversation = true;
       }
 
@@ -242,6 +264,8 @@ export async function POST(request: Request) {
       ];
       if (createdNewConversation) {
         persistenceTasks.push(consumeUsage(companyId, "conversations"));
+      } else if (!persistedCustomerLanguage) {
+        persistenceTasks.push(updateConversationLanguage(conversationId, companyId, customerLanguage));
       }
       await Promise.all(persistenceTasks);
     } catch {
@@ -282,16 +306,6 @@ export async function POST(request: Request) {
   }
 
   // ─── 3. Run AI analysis ───
-  const recentMessagesForAI = payload.recentMessages?.map(
-    (message, index): ConversationMessage => ({
-      id: message.id ?? `hist_${index}`,
-      role: message.role,
-      text: message.text,
-      createdAt: message.createdAt ?? "",
-      channel: message.channel ?? "website_widget",
-    }),
-  );
-
   let result;
   try {
     result = await analyzeCustomerTurn({
@@ -300,6 +314,7 @@ export async function POST(request: Request) {
       configuration: configToUse,
       existingBossItems,
       recentMessages: recentMessagesForAI,
+      customerLanguage,
     });
   } catch {
     if (hasDb) {

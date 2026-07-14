@@ -20,7 +20,7 @@ import {
 } from "../ai/extract";
 import { generateAiReplyWithAI } from "../ai/reply";
 import { hasRealAI } from "../ai";
-import { detectCustomerLang, type PromptLang } from "../ai/prompts/templates";
+import { resolveConversationLang, type PromptLang } from "../ai/prompts/templates";
 
 const eventKeywords: Array<{
   type: EventType;
@@ -192,9 +192,16 @@ export async function analyzeCustomerTurn(params: {
   configuration: BusinessConfiguration;
   existingBossItems: ExistingBossInboxItem[];
   recentMessages?: ConversationMessage[];
+  customerLanguage?: PromptLang;
 }): Promise<WorkflowResult> {
   const now = new Date();
-  const fastFaqReply = getFastFaqReply(params.message, params.configuration);
+  const lang = resolveConversationLang({
+    customerMessage: params.message,
+    recentMessages: params.recentMessages,
+    config: params.configuration,
+    lockedLanguage: params.customerLanguage,
+  });
+  const fastFaqReply = getFastFaqReply(params.message, params.configuration, lang);
   if (fastFaqReply) {
     return {
       aiMessage: {
@@ -267,6 +274,7 @@ export async function analyzeCustomerTurn(params: {
       quote,
       configuration: params.configuration,
       recentMessages: params.recentMessages,
+      customerLanguage: lang,
     });
     aiMessage = {
       id: `msg_ai_${Date.now()}`,
@@ -283,7 +291,7 @@ export async function analyzeCustomerTurn(params: {
       detectedEvents,
       missingFields,
       quote,
-      lang: detectCustomerLang(params.message, params.configuration),
+      lang,
       createdAt: now.toISOString(),
     });
   }
@@ -306,8 +314,10 @@ export async function analyzeCustomerTurn(params: {
 export function getFastFaqReply(
   message: string,
   configuration: BusinessConfiguration,
+  customerLanguage?: PromptLang,
 ): string | undefined {
-  if (detectCustomerLang(message, configuration) !== "zh") return undefined;
+  const lang = customerLanguage ?? resolveConversationLang({ customerMessage: message, config: configuration });
+  if (lang !== "zh") return undefined;
 
   const compact = message.toLowerCase().replaceAll(/\s+/gu, "");
   const isQuestion = /[?？]|吗|嗎|么|麼|如何|怎么|怎麼|多久|多长|多長|能否|可以|是否|包含/u.test(compact);

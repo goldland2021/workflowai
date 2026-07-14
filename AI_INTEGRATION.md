@@ -38,6 +38,12 @@ The application then applies deterministic missing-field, pricing, escalation,
 and owner-approval rules. The reply model receives that validated state and
 writes a natural response in the visitor's language.
 
+The first meaningful customer-language signal is stored on the conversation
+and reused for every later reply. Contact-only turns such as an email address,
+URL, username, or phone number do not change the established language. The host
+page locale is used only as an initial fallback before the customer writes a
+meaningful message.
+
 The model never owns pricing. Quote suggestions come from the company's stored
 pricing rules and are sent to the owner for approval; customer replies do not
 expose unapproved prices.
@@ -53,6 +59,7 @@ avoiding unnecessary provider latency without bypassing commercial workflows.
 - Provider failures return a controlled response and create an operational failure record.
 - Shared production rate limits protect the public AI endpoint.
 - Exact tenant-scoped FAQ caching never reuses fuzzy booking messages.
+- Conversation-level language locking prevents contact details from causing language drift.
 - Logs do not include raw customer messages or contact identifiers.
 
 Run `npm test`, `npm run lint`, `npm run build`, and `npm run test:e2e` before release.

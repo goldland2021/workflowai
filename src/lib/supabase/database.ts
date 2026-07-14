@@ -60,13 +60,23 @@ export type ConversationRow = {
   customer_name: string | null;
   contact_method: string | null;
   contact_value: string | null;
+  customer_language: "zh" | "en" | "ar" | null;
   status: string;
   created_at: string;
   updated_at: string;
 };
 
-export async function createConversation(sessionId: string, companyId: string): Promise<string> {
-  const body = { session_id: sessionId, company_id: companyId, status: "active" };
+export async function createConversation(
+  sessionId: string,
+  companyId: string,
+  customerLanguage: "zh" | "en" | "ar",
+): Promise<string> {
+  const body = {
+    session_id: sessionId,
+    company_id: companyId,
+    customer_language: customerLanguage,
+    status: "active",
+  };
   const res = await supabaseFetch("/rest/v1/conversations", {
     method: "POST",
     headers: { "Content-Type": "application/json", Prefer: "return=representation" },
@@ -74,6 +84,24 @@ export async function createConversation(sessionId: string, companyId: string): 
   });
   const data = (await res.json()) as ConversationRow[];
   return data[0]?.id ?? "";
+}
+
+export async function updateConversationLanguage(
+  conversationId: string,
+  companyId: string,
+  customerLanguage: "zh" | "en" | "ar",
+): Promise<void> {
+  await supabaseFetch(
+    `/rest/v1/conversations?id=eq.${encodeURIComponent(conversationId)}&company_id=eq.${encodeURIComponent(companyId)}&customer_language=is.null`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({
+        customer_language: customerLanguage,
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
 }
 
 export async function getConversations(companyId: string, limit = 20): Promise<ConversationRow[]> {

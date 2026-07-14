@@ -65,6 +65,7 @@ export function useChat(
   defaultOpen = false,
   widgetToken?: string,
   widgetOrigin?: string,
+  languageHint?: "zh" | "en" | "ar",
   welcomeMessage?: string,
   errorFallbackMessage?: string,
 ): UseChatReturn {
@@ -140,6 +141,7 @@ export function useChat(
           companyId,
           widgetToken,
           widgetOrigin,
+          languageHint,
         },
         apiEndpoint,
       );
@@ -177,7 +179,7 @@ export function useChat(
     } finally {
       setIsTyping(false);
     }
-  }, [apiEndpoint, messages, isTyping, companyId, tripDetails, existingBossItems, widgetToken, widgetOrigin, errorFallbackMessage]);
+  }, [apiEndpoint, messages, isTyping, companyId, tripDetails, existingBossItems, widgetToken, widgetOrigin, languageHint, errorFallbackMessage]);
 
   return { messages, isOpen, isTyping, error, toggleOpen, sendMessage, clearError };
 }
