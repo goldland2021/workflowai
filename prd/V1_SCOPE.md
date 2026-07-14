@@ -430,7 +430,7 @@ V1 should not include:
 - Marketplace
 - Multi-agent collaboration
 - Advanced workflow builder
-- Stripe payments
+- Airport-transfer trip-payment collection
 - Social media management
 - Facebook Messenger
 - Instagram integration
@@ -678,7 +678,7 @@ Future versions may add:
 - Telegram bot
 - Email conversation channel
 - Google Calendar
-- Stripe payment collection
+- Airport-transfer trip-payment collection
 - Map-based distance pricing
 - Driver dispatch
 - Invoice and receipt generation

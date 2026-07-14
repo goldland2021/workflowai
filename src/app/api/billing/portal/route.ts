@@ -18,8 +18,8 @@ export async function POST(request: Request) {
       return_url: `${getBillingBaseUrl(request)}/billing`,
     });
     return Response.json({ url: portal.url });
-  } catch (error) {
-    console.error("Failed to create Stripe billing portal session", error);
+  } catch {
+    console.error("Failed to create Stripe billing portal session");
     return Response.json({ error: "暂时无法打开账单管理，请稍后重试。" }, { status: 502 });
   }
 }

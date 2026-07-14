@@ -29,7 +29,7 @@ import {
   upsertBooking,
 } from "@/lib/supabase/database";
 import { findCachedReply, cacheReply } from "@/lib/ai/reply-cache";
-import { checkRateLimit, getClientIp } from "@/lib/ai/rate-limit";
+import { checkDistributedRateLimit, getClientIp } from "@/lib/ai/rate-limit";
 import { checkUsageLimit, consumeUsage } from "@/lib/saas/usage";
 import { getWidgetSettings } from "@/lib/supabase/saas";
 
@@ -76,6 +76,35 @@ const AnalyzeCustomerTurnRequestSchema = z.object({
 
 type AnalyzeCustomerTurnPayload = z.infer<typeof AnalyzeCustomerTurnRequestSchema>;
 
+async function authorizeWidgetRequest(
+  companyId: string,
+  widgetToken: string | undefined,
+  widgetOrigin: string | undefined,
+): Promise<Response | null> {
+  if (!widgetToken) {
+    return Response.json({ error: "Invalid widget token." }, { status: 403 });
+  }
+
+  if (!isConfigured()) {
+    return verifyWidgetToken(companyId, widgetToken)
+      ? null
+      : Response.json({ error: "Invalid widget token." }, { status: 403 });
+  }
+
+  try {
+    const widgetSettings = await getWidgetSettings(companyId);
+    if (!verifyWidgetToken(companyId, widgetToken, widgetSettings.widgetTokenVersion)) {
+      return Response.json({ error: "Invalid widget token." }, { status: 403 });
+    }
+    if (!isWidgetOriginAllowed(widgetOrigin, widgetSettings.allowedWidgetOrigins)) {
+      return Response.json({ error: "Widget origin is not allowed." }, { status: 403 });
+    }
+    return null;
+  } catch {
+    return Response.json({ error: "Widget security is not configured." }, { status: 503 });
+  }
+}
+
 export async function POST(request: Request) {
   let body: unknown;
 
@@ -109,25 +138,17 @@ export async function POST(request: Request) {
     return Response.json({ error: "companyId is required." }, { status: 400 });
   }
 
-  if (!checkRateLimit(`${companyId}:${getClientIp(request)}`)) {
+  if (!(await checkDistributedRateLimit(`conversation:${companyId}:${getClientIp(request)}`))) {
     return Response.json({ error: "Too many requests. Please slow down." }, { status: 429 });
   }
 
   if (!isAdmin) {
-    if (!verifyWidgetToken(companyId, payload.widgetToken)) {
-      return Response.json({ error: "Invalid widget token." }, { status: 403 });
-    }
-
-    if (isConfigured()) {
-      try {
-        const widgetSettings = await getWidgetSettings(companyId);
-        if (!isWidgetOriginAllowed(payload.widgetOrigin, widgetSettings.allowedWidgetOrigins)) {
-          return Response.json({ error: "Widget origin is not allowed." }, { status: 403 });
-        }
-      } catch {
-        return Response.json({ error: "Widget security is not configured." }, { status: 503 });
-      }
-    }
+    const authorizationError = await authorizeWidgetRequest(
+      companyId,
+      payload.widgetToken,
+      payload.widgetOrigin,
+    );
+    if (authorizationError) return authorizationError;
   }
 
   // The owner's Test Lab previews how the AI would behave without creating
@@ -153,8 +174,8 @@ export async function POST(request: Request) {
           { status: 402 },
         );
       }
-    } catch (e) {
-      console.warn("Usage gate unavailable; continuing until migration 003 is applied", e);
+    } catch {
+      return Response.json({ error: "Usage service is temporarily unavailable." }, { status: 503 });
     }
   }
 
@@ -182,8 +203,8 @@ export async function POST(request: Request) {
       try {
         const storedBooking = await getBookingByConversationId(conversationId, companyId);
         if (storedBooking) currentTripDetails = bookingRowToTripDetails(storedBooking);
-      } catch (e) {
-        console.warn("Failed to load stored trip details", e);
+      } catch {
+        console.warn("Failed to load stored trip details");
       }
 
       try {
@@ -193,11 +214,11 @@ export async function POST(request: Request) {
           type: item.type as "quote_approval" | "event_review" | "driver_assignment" | "receipt_request" | "change_request" | "payment_coordination",
           event: item.event_type ? { eventType: item.event_type as never } : undefined,
         }));
-      } catch (e) {
-        console.warn("Failed to load existing inbox items", e);
+      } catch {
+        console.warn("Failed to load existing inbox items");
       }
-    } catch (e) {
-      console.warn("Failed to verify conversation ownership", e);
+    } catch {
+      console.warn("Failed to verify conversation ownership");
       return Response.json({ error: "Unable to verify conversation." }, { status: 503 });
     }
   }
@@ -216,11 +237,11 @@ export async function POST(request: Request) {
       try {
         await consumeUsage(companyId, "ai_messages");
         if (createdNewConversation) await consumeUsage(companyId, "conversations");
-      } catch (e) {
-        console.warn("Failed to record usage", e);
+      } catch {
+        return Response.json({ error: "Unable to record usage." }, { status: 503 });
       }
-    } catch (e) {
-      console.warn("Failed to save message to DB, continuing without persistence", e);
+    } catch {
+      return Response.json({ error: "Unable to persist this message." }, { status: 503 });
     }
   }
 
@@ -239,8 +260,8 @@ export async function POST(request: Request) {
       if (hasDb && conversationId) {
         try {
           await saveMessage(conversationId, aiMessage);
-        } catch (e) {
-          console.warn("Failed to save cached AI reply to DB", e);
+        } catch {
+          console.warn("Failed to save cached AI reply to DB");
         }
       }
 
@@ -286,14 +307,13 @@ export async function POST(request: Request) {
       existingBossItems,
       recentMessages: recentMessagesForAI,
     });
-  } catch (error) {
-    const failureMessage = error instanceof Error ? error.message : "AI analysis failed";
+  } catch {
     if (hasDb) {
       await logAiFailure({
         companyId,
         conversationId,
         stage: "analyze_customer_turn",
-        message: failureMessage,
+        message: "AI workflow request failed",
         provider: "workflow-ai",
       }).catch(() => undefined);
     }
@@ -306,23 +326,23 @@ export async function POST(request: Request) {
   if (hasDb && conversationId) {
     try {
       await saveMessage(conversationId, result.aiMessage);
-    } catch (e) {
-      console.warn("Failed to save AI reply to DB", e);
+    } catch {
+      console.warn("Failed to save AI reply to DB");
     }
 
     let bookingId: string | undefined;
     try {
       bookingId = await upsertBooking(conversationId, result.tripDetails, companyId);
-    } catch (e) {
-      console.warn("Failed to upsert booking draft to DB", e);
+    } catch {
+      console.warn("Failed to upsert booking draft to DB");
     }
 
     if (result.contact) {
       try {
         await updateConversationContact(conversationId, companyId, result.contact);
         await consumeUsage(companyId, "leads");
-      } catch (e) {
-        console.warn("Failed to persist captured contact or usage", e);
+      } catch {
+        console.warn("Failed to persist captured contact or usage");
       }
     }
 
@@ -330,8 +350,8 @@ export async function POST(request: Request) {
       if (result.bossInboxItems.some((item) => item.type === "quote_approval")) {
         try {
           await consumeUsage(companyId, "quote_suggestions");
-        } catch (e) {
-          console.warn("Failed to record quote usage", e);
+        } catch {
+          console.warn("Failed to record quote usage");
         }
       }
       try {
@@ -347,14 +367,20 @@ export async function POST(request: Request) {
             return savedId ? { ...item, id: savedId } : item;
           }),
         );
-      } catch (e) {
-        console.warn("Failed to save Boss Inbox items to DB", e);
+      } catch {
+        console.warn("Failed to save Boss Inbox items to DB");
       }
     }
   }
 
   // ─── 5. Cache the reply (only for simple turns without events) ───
-  if (canUseCache && result.detectedEvents.length === 0 && !result.contact && result.bossInboxItems.length === 0) {
+  if (
+    canUseCache &&
+    Object.keys(result.tripDetails).length === 0 &&
+    result.detectedEvents.length === 0 &&
+    !result.contact &&
+    result.bossInboxItems.length === 0
+  ) {
     cacheReply(companyId, payload.message, result.aiMessage.text);
   }
 
@@ -377,6 +403,15 @@ export async function GET(request: Request) {
 
   if (!companyId) {
     return Response.json({ error: "companyId is required" }, { status: 400 });
+  }
+
+  if (!sessionCompanyId) {
+    const authorizationError = await authorizeWidgetRequest(
+      companyId,
+      request.headers.get("x-workflowai-widget-token") ?? undefined,
+      request.headers.get("x-workflowai-widget-origin") ?? undefined,
+    );
+    if (authorizationError) return authorizationError;
   }
 
   if (!conversationId && !sessionId) {
@@ -413,8 +448,8 @@ export async function GET(request: Request) {
 
     const messages = await getMessages(match.id);
     return Response.json({ messages, conversationId: match.id });
-  } catch (e) {
-    console.warn("Failed to load conversation history", e);
+  } catch {
+    console.warn("Failed to load conversation history");
     return Response.json({ messages: [], conversationId: null, error: "Failed to load" });
   }
 }

@@ -54,8 +54,9 @@ export async function getCurrentCompanyId(): Promise<string | null> {
   try {
     return await isAuthSessionActive(companyId, token as string) ? companyId : null;
   } catch {
-    // Keep existing installs usable until the SaaS migration is applied.
-    return companyId;
+    // Session revocation is a security boundary in production. Development
+    // keeps the compatibility fallback for databases that have not migrated.
+    return process.env.NODE_ENV === "production" ? null : companyId;
   }
 }
 

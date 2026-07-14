@@ -18,7 +18,6 @@ export interface CacheEntry {
 // ─── Configuration ───
 
 const MAX_CACHE_SIZE = 200;
-const SIMILARITY_THRESHOLD = 0.65; // 65% similarity required for cache hit
 const CACHE_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
 
 // ─── In-memory store ───
@@ -41,44 +40,6 @@ function normalize(text: string): string {
     .trim();
 }
 
-// ─── Tokenization ───
-
-function tokenize(text: string): Set<string> {
-  const normalized = normalize(text);
-  const words: string[] = [];
-
-  // Handle Chinese: split by character bigrams
-  const chineseChars = normalized.match(/[\u4e00-\u9fff]/g) || [];
-  if (chineseChars.length > 0) {
-    // Character bigrams for Chinese
-    for (let i = 0; i < chineseChars.length - 1; i++) {
-      words.push(chineseChars[i] + chineseChars[i + 1]);
-    }
-    // Also add single characters
-    words.push(...chineseChars);
-  }
-
-  // English words + numbers
-  const englishTokens = normalized.match(/[a-z0-9]+/g) || [];
-  words.push(...englishTokens);
-
-  return new Set(words);
-}
-
-// ─── Jaccard Similarity ───
-
-function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 && b.size === 0) return 1;
-
-  let intersection = 0;
-  for (const item of a) {
-    if (b.has(item)) intersection++;
-  }
-
-  const union = a.size + b.size - intersection;
-  return union === 0 ? 0 : intersection / union;
-}
-
 // ─── Eviction (LRU-style) ───
 
 function evictIfNeeded(): void {
@@ -98,39 +59,21 @@ function evictIfNeeded(): void {
 // ─── Public API ───
 
 /**
- * Find a cached reply for a similar message, scoped to one company.
+ * Find a cached reply for the same normalized message, scoped to one company.
  * Returns undefined if no match found.
  */
 export function findCachedReply(companyId: string, message: string): string | undefined {
   const now = Date.now();
-  const tokens = tokenize(message);
-  let bestMatch: { mapKey: string; similarity: number } | undefined;
-
-  for (const [key, entry] of store) {
-    if (entry.companyId !== companyId) continue;
-
-    // Check TTL
-    if (now - entry.createdAt > CACHE_TTL_MS) {
-      store.delete(key);
-      continue;
-    }
-
-    const keyTokens = tokenize(entry.key);
-    const similarity = jaccardSimilarity(tokens, keyTokens);
-
-    if (similarity >= SIMILARITY_THRESHOLD && (!bestMatch || similarity > bestMatch.similarity)) {
-      bestMatch = { mapKey: key, similarity };
-    }
+  const key = mapKey(companyId, normalize(message));
+  const entry = store.get(key);
+  if (!entry) return undefined;
+  if (now - entry.createdAt > CACHE_TTL_MS) {
+    store.delete(key);
+    return undefined;
   }
 
-  if (bestMatch) {
-    const entry = store.get(bestMatch.mapKey)!;
-    entry.hits++;
-    console.log(`[Cache HIT] similarity=${bestMatch.similarity.toFixed(2)} key="${bestMatch.mapKey.slice(0, 40)}..." hits=${entry.hits}`);
-    return entry.reply;
-  }
-
-  return undefined;
+  entry.hits++;
+  return entry.reply;
 }
 
 /**

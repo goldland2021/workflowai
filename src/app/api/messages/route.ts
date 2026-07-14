@@ -28,9 +28,9 @@ export async function POST(request: Request) {
 
     await saveMessage(conversationId, message);
     return NextResponse.json({ ok: true });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "Unknown error" },
+      { ok: false, error: "Unable to save message" },
       { status: 500 }
     );
   }

@@ -6,6 +6,7 @@ import { UNUSABLE_PASSWORD_HASH, verifyPassword } from "@/lib/auth/password";
 import { isConfigured } from "@/lib/supabase/client";
 import { getCompanyByEmail } from "@/lib/supabase/database";
 import { storeAuthSession } from "@/lib/supabase/saas";
+import { checkAuthRateLimit } from "@/lib/auth/rate-limit";
 
 const LoginRequestSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(200),
@@ -29,6 +30,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "请输入邮箱和密码" }, { status: 400 });
   }
 
+  if (!(await checkAuthRateLimit(request, {
+    action: "login",
+    ip: { windowMs: 15 * 60_000, maxRequests: 20 },
+    identifier: parsed.data.email,
+    identifierLimit: { windowMs: 15 * 60_000, maxRequests: 8 },
+  }))) {
+    return NextResponse.json({ ok: false, error: "Too many login attempts" }, { status: 429 });
+  }
+
   try {
     const company = await getCompanyByEmail(parsed.data.email);
     // Always run the hash comparison, even with no matching account, so a
@@ -49,8 +59,8 @@ export async function POST(request: Request) {
         token,
         new Date(Date.now() + sessionMaxAgeSeconds * 1000).toISOString(),
       );
-    } catch {
-      // Existing installations can continue until migration 003 is applied.
+    } catch (error) {
+      if (process.env.NODE_ENV === "production") throw error;
     }
     const cookieStore = await cookies();
     cookieStore.set(sessionCookieName, token, {
@@ -62,9 +72,9 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json({ ok: true });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "Unknown error" },
+      { ok: false, error: "Unable to sign in" },
       { status: 500 },
     );
   }
