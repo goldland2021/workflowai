@@ -5,6 +5,8 @@
 Run every SQL file in `supabase/migrations` in numeric order. Migration 006 is
 required before deploying the matching application code because production rate
 limiting and atomic auth-token consumption fail closed when their RPCs are absent.
+Migration 007 stores the customer's established conversation language so later
+contact-only turns cannot switch the reply language.
 
 ## Required Vercel variables
 

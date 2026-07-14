@@ -295,6 +295,46 @@ describe("analyzeCustomerTurn - message presentation", () => {
     expect(result.aiMessage.text).not.toMatch(/[\u3400-\u9fff]/u);
   });
 
+  it("keeps Chinese after a Chinese customer replies with only an email address", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "guest@example.com",
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+      recentMessages: [{
+        id: "customer-zh",
+        role: "customer",
+        text: "你好，我想预订机场接送。",
+        createdAt: new Date().toISOString(),
+        channel: "website_widget",
+      }],
+    });
+
+    expect(result.contact).toEqual({ method: "Email", value: "guest@example.com" });
+    expect(result.aiMessage.text).toMatch(/[\u3400-\u9fff]/u);
+    expect(result.aiMessage.text).not.toMatch(/^Thanks\b/i);
+  });
+
+  it("keeps English after an English customer replies with only an email address", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "guest@example.com",
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+      recentMessages: [{
+        id: "customer-en",
+        role: "customer",
+        text: "Hello, I would like to book an airport transfer.",
+        createdAt: new Date().toISOString(),
+        channel: "website_widget",
+      }],
+    });
+
+    expect(result.contact).toEqual({ method: "Email", value: "guest@example.com" });
+    expect(result.aiMessage.text).toMatch(/^Thanks\b/i);
+    expect(result.aiMessage.text).not.toMatch(/[\u3400-\u9fff]/u);
+  });
+
   it("rejects a mostly Chinese reply for an English customer", () => {
     expect(replyLanguageMatches("您好，我会为您准备报价。", "en")).toBe(false);
     expect(replyLanguageMatches("Thanks. I recommend 丰田阿尔法 for this transfer.", "en")).toBe(true);

@@ -6,6 +6,7 @@ import type {
   DetectedEvent,
   TripDetails,
 } from "./types";
+import type { PromptLang } from "../ai/prompts/templates";
 
 export interface ExistingBossInboxItem {
   status: BossInboxItem["status"];
@@ -18,6 +19,7 @@ export interface AnalyzeCustomerTurnRequest {
   currentTripDetails: TripDetails;
   existingBossItems: ExistingBossInboxItem[];
   recentMessages?: ConversationMessage[];   // last few turns for context
+  languageHint?: PromptLang; // host-page locale, used only until the customer language is established
   businessConfiguration?: BusinessConfiguration; // allow teaching/editing config via UI
   sessionId?: string;       // browser session for persistence
   conversationId?: string;  // existing conversation to continue

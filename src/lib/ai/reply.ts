@@ -1,5 +1,5 @@
 import { generateReply } from './client';
-import { buildReplyPrompt, detectCustomerLang, type PromptLang } from './prompts/templates';
+import { buildReplyPrompt, resolveConversationLang, type PromptLang } from './prompts/templates';
 import type { 
   TripDetails, DetectedEvent, CapturedContact, QuoteSuggestion, TripFieldKey,
   BusinessConfiguration, ConversationMessage
@@ -48,14 +48,20 @@ export async function generateAiReplyWithAI(params: {
   quote?: QuoteSuggestion;
   configuration?: BusinessConfiguration;
   recentMessages?: ConversationMessage[];
+  customerLanguage?: PromptLang;
 }): Promise<string> {
   const {
     customerMessage, tripDetails, contact, missingFields, quote,
-    configuration, recentMessages
+    configuration, recentMessages, customerLanguage
   } = params;
 
   const company = configuration?.companyProfile;
-  const lang = detectCustomerLang(customerMessage, configuration);
+  const lang = resolveConversationLang({
+    customerMessage,
+    recentMessages,
+    config: configuration,
+    lockedLanguage: customerLanguage,
+  });
 
   const keyPolicies = configuration ? {
     businessHours: configuration.businessHours,
@@ -100,7 +106,7 @@ export async function generateAiReplyWithAI(params: {
   try {
     const generated = await generateReply(prompt, system, temperature);
     if (replyLanguageMatches(generated, lang)) return generated;
-    console.warn('LLM reply language did not match the latest customer message, using fallback');
+    console.warn('LLM reply language did not match the conversation language, using fallback');
   } catch {
     console.warn('LLM reply generation failed, using fallback');
   }
