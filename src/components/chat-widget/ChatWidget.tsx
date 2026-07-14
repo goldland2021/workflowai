@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useRef, useEffect, useState, useCallback } from "react";
+import { WIDGET_STATE_MESSAGE_TYPE, type WidgetStateMessage } from "@/lib/widget/protocol";
 import { useChat } from "./use-chat";
 
 // ─── Inline Styles ───
@@ -79,6 +80,24 @@ export default function ChatWidget({ title = "WorkflowAI", subtitle, defaultOpen
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, isTyping]);
   useEffect(() => { if (isOpen) setTimeout(() => inpRef.current?.focus(), 300); }, [isOpen]);
+  useEffect(() => {
+    if (window.parent === window) return;
+
+    let targetOrigin = "*";
+    if (widgetOrigin) {
+      try {
+        targetOrigin = new URL(widgetOrigin).origin;
+      } catch {
+        targetOrigin = "*";
+      }
+    }
+
+    const message: WidgetStateMessage = {
+      type: WIDGET_STATE_MESSAGE_TYPE,
+      isOpen,
+    };
+    window.parent.postMessage(message, targetOrigin);
+  }, [isOpen, widgetOrigin]);
 
   const send = useCallback(() => { const t = txt.trim(); if (!t || isTyping) return; setTxt(""); sendMessage(t); }, [txt, isTyping, sendMessage]);
   const onKey = useCallback((e: React.KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }, [send]);

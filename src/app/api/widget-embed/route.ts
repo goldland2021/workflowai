@@ -6,37 +6,7 @@ export const runtime = "nodejs";
 import { getCurrentCompanyId } from "@/lib/auth/admin";
 import { createWidgetToken, verifyWidgetToken } from "@/lib/auth/widget";
 import { getWidgetSettings } from "@/lib/supabase/saas";
-
-const SCRIPT = (baseUrl: string, widgetSrc: string) => `
-(function() {
-  // Don't load twice
-  if (window.__waiWidgetLoaded) return;
-  window.__waiWidgetLoaded = true;
-
-  var BASE = ${JSON.stringify(baseUrl)};
-
-  // Create container
-  var container = document.createElement("div");
-  container.id = "wai-widget-container";
-  container.style.cssText = "all:initial;position:fixed;z-index:999999;bottom:0;right:0;width:0;height:0;";
-  document.body.appendChild(container);
-
-  // Create iframe
-  var iframe = document.createElement("iframe");
-  iframe.src = BASE + ${JSON.stringify(widgetSrc)}
-    + "&origin=" + encodeURIComponent(window.location.origin)
-    + "&lang=" + encodeURIComponent(document.documentElement.lang || "en");
-  iframe.style.cssText = "border:none;width:420px;height:620px;position:fixed;bottom:0;right:0;z-index:999999;background:transparent;pointer-events:none;";
-  iframe.title = "Chat Widget";
-  iframe.setAttribute("aria-label", "Chat Widget");
-  document.body.appendChild(iframe);
-
-  // Allow pointer events when iframe is interacted with
-  iframe.onload = function() {
-    iframe.style.pointerEvents = "auto";
-  };
-})();
-`;
+import { buildWidgetEmbedScript } from "@/lib/widget/embed-script";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -60,10 +30,10 @@ export async function GET(request: Request) {
 
   const widgetSrc = `/widget?company=${encodeURIComponent(companyId)}&token=${encodeURIComponent(token)}`;
 
-  return new Response(SCRIPT(baseUrl, widgetSrc), {
+  return new Response(buildWidgetEmbedScript(baseUrl, widgetSrc), {
     headers: {
       "Content-Type": "application/javascript; charset=utf-8",
-      "Cache-Control": "public, max-age=3600, immutable",
+      "Cache-Control": "public, max-age=300, must-revalidate",
     },
   });
 }
