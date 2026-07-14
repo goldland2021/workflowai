@@ -12,7 +12,7 @@ vi.mock("../ai/client", () => ({
   }),
 }));
 
-import { analyzeCustomerTurn, filterDetectedEventsForMessage } from "./ai-workflow";
+import { analyzeCustomerTurn, filterDetectedEventsForMessage, getFastFaqReply } from "./ai-workflow";
 import { airportTransferConfiguration } from "./airport-transfer";
 import type { DetectedEvent, TripDetails } from "./types";
 import { replyLanguageMatches } from "../ai/reply";
@@ -29,6 +29,25 @@ const completeTripDetails: TripDetails = {
   time: "18:30",
   passengerCount: 2,
 };
+
+describe("getFastFaqReply", () => {
+  it("answers configured Chinese policy questions without an LLM call", () => {
+    expect(getFastFaqReply("司机可以等待多久？", airportTransferConfiguration)).toBe(
+      "标准等待时间为航班降落后 60 分钟。",
+    );
+  });
+
+  it("answers included-fee questions without confirming a final price", () => {
+    const answer = getFastFaqReply("报价是否包含高速费和停车费？", airportTransferConfiguration);
+    expect(answer).toContain("老板确认");
+    expect(answer).toContain("最终以老板批准的报价为准");
+  });
+
+  it("does not intercept non-Chinese or commercial event messages", () => {
+    expect(getFastFaqReply("How long can the driver wait?", airportTransferConfiguration)).toBeUndefined();
+    expect(getFastFaqReply("我已经付款，请确认。", airportTransferConfiguration)).toBeUndefined();
+  });
+});
 
 describe("analyzeCustomerTurn - quote suggestion rules", () => {
   it("does not suggest a quote while required trip fields are missing", async () => {

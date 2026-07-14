@@ -42,6 +42,10 @@ The model never owns pricing. Quote suggestions come from the company's stored
 pricing rules and are sent to the owner for approval; customer replies do not
 expose unapproved prices.
 
+Common Chinese policy questions (waiting time, payment method, child seats, and
+included fees) use a deterministic fast path backed by structured configuration,
+avoiding unnecessary provider latency without bypassing commercial workflows.
+
 ## Reliability and privacy
 
 - All provider keys stay in server-only modules.
