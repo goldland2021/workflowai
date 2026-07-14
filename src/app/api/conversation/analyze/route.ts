@@ -138,18 +138,17 @@ export async function POST(request: Request) {
     return Response.json({ error: "companyId is required." }, { status: 400 });
   }
 
-  if (!(await checkDistributedRateLimit(`conversation:${companyId}:${getClientIp(request)}`))) {
+  const [rateAllowed, authorizationError] = await Promise.all([
+    checkDistributedRateLimit(`conversation:${companyId}:${getClientIp(request)}`),
+    isAdmin
+      ? Promise.resolve(null)
+      : authorizeWidgetRequest(companyId, payload.widgetToken, payload.widgetOrigin),
+  ]);
+
+  if (!rateAllowed) {
     return Response.json({ error: "Too many requests. Please slow down." }, { status: 429 });
   }
-
-  if (!isAdmin) {
-    const authorizationError = await authorizeWidgetRequest(
-      companyId,
-      payload.widgetToken,
-      payload.widgetOrigin,
-    );
-    if (authorizationError) return authorizationError;
-  }
+  if (authorizationError) return authorizationError;
 
   // The owner's Test Lab previews how the AI would behave without creating
   // real conversations, bookings, or Boss Inbox items - and without polluting
@@ -159,25 +158,6 @@ export async function POST(request: Request) {
   // ─── 1. Database persistence ───
   const hasDb = isConfigured() && !isSimulation;
   const canUseCache = !isSimulation;
-
-  if (hasDb) {
-    try {
-      const gate = await checkUsageLimit(companyId, "ai_messages");
-      if (!gate.allowed) {
-        return Response.json(
-          {
-            error: gate.reason === "trial_expired" ? "Trial expired." : "Usage limit reached.",
-            code: gate.reason,
-            usage: gate.summary.usage,
-            limits: gate.summary.limits,
-          },
-          { status: 402 },
-        );
-      }
-    } catch {
-      return Response.json({ error: "Usage service is temporarily unavailable." }, { status: 503 });
-    }
-  }
 
   let conversationId: string | undefined = payload.conversationId;
   let createdNewConversation = false;
@@ -191,35 +171,59 @@ export async function POST(request: Request) {
     channel: "website_widget",
   };
 
+  let configToUse = airportTransferConfiguration;
+  try {
+    const [gate, persistedConfig, conversation] = await Promise.all([
+      hasDb ? checkUsageLimit(companyId, "ai_messages") : Promise.resolve(null),
+      isAdmin && payload.businessConfiguration
+        ? Promise.resolve(payload.businessConfiguration)
+        : isConfigured()
+          ? getBusinessConfig(companyId)
+          : Promise.resolve(null),
+      hasDb && conversationId
+        ? getConversationById(conversationId, companyId)
+        : Promise.resolve(undefined),
+    ]);
+
+    configToUse = persistedConfig ?? airportTransferConfiguration;
+    if (gate && !gate.allowed) {
+      return Response.json(
+        {
+          error: gate.reason === "trial_expired" ? "Trial expired." : "Usage limit reached.",
+          code: gate.reason,
+          usage: gate.summary.usage,
+          limits: gate.summary.limits,
+        },
+        { status: 402 },
+      );
+    }
+    if (hasDb && conversationId && !conversation) {
+      return Response.json({ error: "Conversation not found." }, { status: 404 });
+    }
+  } catch {
+    return Response.json({ error: "Required conversation services are unavailable." }, { status: 503 });
+  }
+
   if (hasDb && conversationId) {
-    try {
-      // A browser can replay any conversation ID it has seen. Verify the
-      // conversation belongs to this company before accepting a new message.
-      const conversation = await getConversationById(conversationId, companyId);
-      if (!conversation) {
-        return Response.json({ error: "Conversation not found." }, { status: 404 });
-      }
+    const [bookingResult, inboxResult] = await Promise.allSettled([
+      getBookingByConversationId(conversationId, companyId),
+      getBossInboxItemsByConversationId(conversationId, companyId),
+    ]);
 
-      try {
-        const storedBooking = await getBookingByConversationId(conversationId, companyId);
-        if (storedBooking) currentTripDetails = bookingRowToTripDetails(storedBooking);
-      } catch {
-        console.warn("Failed to load stored trip details");
-      }
+    if (bookingResult.status === "fulfilled") {
+      if (bookingResult.value) currentTripDetails = bookingRowToTripDetails(bookingResult.value);
+    } else {
+      console.warn("Failed to load stored trip details");
+    }
 
-      try {
-        const storedInboxItems = await getBossInboxItemsByConversationId(conversationId, companyId);
-        existingBossItems = storedInboxItems.map((item) => ({
-          status: item.status as "pending" | "approved" | "edited" | "rejected",
-          type: item.type as "quote_approval" | "event_review" | "driver_assignment" | "receipt_request" | "change_request" | "payment_coordination",
-          event: item.event_type ? { eventType: item.event_type as never } : undefined,
-        }));
-      } catch {
-        console.warn("Failed to load existing inbox items");
-      }
-    } catch {
-      console.warn("Failed to verify conversation ownership");
-      return Response.json({ error: "Unable to verify conversation." }, { status: 503 });
+    if (inboxResult.status === "fulfilled") {
+      existingBossItems = inboxResult.value.map((item) => ({
+        status: item.status as "pending" | "approved" | "edited" | "rejected",
+        type: item.type as "quote_approval" | "event_review" | "driver_assignment" | "receipt_request" | "change_request" | "payment_coordination",
+        event: item.event_type ? { eventType: item.event_type as never } : undefined,
+      }));
+    } else {
+      console.warn("Failed to load existing inbox items");
     }
   }
 
@@ -232,14 +236,14 @@ export async function POST(request: Request) {
         createdNewConversation = true;
       }
 
-      // Save customer message to DB
-      await saveMessage(conversationId, customerMessage);
-      try {
-        await consumeUsage(companyId, "ai_messages");
-        if (createdNewConversation) await consumeUsage(companyId, "conversations");
-      } catch {
-        return Response.json({ error: "Unable to record usage." }, { status: 503 });
+      const persistenceTasks: Promise<unknown>[] = [
+        saveMessage(conversationId, customerMessage),
+        consumeUsage(companyId, "ai_messages"),
+      ];
+      if (createdNewConversation) {
+        persistenceTasks.push(consumeUsage(companyId, "conversations"));
       }
+      await Promise.all(persistenceTasks);
     } catch {
       return Response.json({ error: "Unable to persist this message." }, { status: 503 });
     }
@@ -288,16 +292,6 @@ export async function POST(request: Request) {
     }),
   );
 
-  // Only an authenticated admin session may override the business configuration
-  // for this request (used by the owner's Test Lab to preview unsaved edits).
-  // Anonymous widget visitors always get the persisted/default configuration —
-  // otherwise a visitor could submit their own pricing rules or behavior
-  // boundaries and have the AI reason from them.
-  const configToUse =
-    isAdmin && payload.businessConfiguration
-      ? payload.businessConfiguration
-      : (isConfigured() ? await getBusinessConfig(companyId) : null) ?? airportTransferConfiguration;
-
   let result;
   try {
     result = await analyzeCustomerTurn({
@@ -324,16 +318,20 @@ export async function POST(request: Request) {
 
   // ─── 4. Save AI reply and operational records to DB ───
   if (hasDb && conversationId) {
-    try {
-      await saveMessage(conversationId, result.aiMessage);
-    } catch {
+    const shouldUpdateBooking = result.tripDetails !== currentTripDetails;
+    const [messageResult, bookingResult] = await Promise.allSettled([
+      saveMessage(conversationId, result.aiMessage),
+      shouldUpdateBooking
+        ? upsertBooking(conversationId, result.tripDetails, companyId)
+        : Promise.resolve(undefined),
+    ]);
+
+    if (messageResult.status === "rejected") {
       console.warn("Failed to save AI reply to DB");
     }
 
-    let bookingId: string | undefined;
-    try {
-      bookingId = await upsertBooking(conversationId, result.tripDetails, companyId);
-    } catch {
+    const bookingId = bookingResult.status === "fulfilled" ? bookingResult.value : undefined;
+    if (bookingResult.status === "rejected") {
       console.warn("Failed to upsert booking draft to DB");
     }
 

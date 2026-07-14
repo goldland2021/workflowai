@@ -227,8 +227,10 @@ export async function incrementUsageCounter(
 }
 
 export async function getUsageSummary(companyId: string): Promise<UsageSummary> {
-  const state = await getCompanySaasState(companyId);
-  const counter = await getUsageCounter(companyId);
+  const [state, counter] = await Promise.all([
+    getCompanySaasState(companyId),
+    getUsageCounter(companyId),
+  ]);
   const usage: Record<UsageMetric, number> = {
     ai_messages: counter.ai_messages,
     conversations: counter.conversations,
