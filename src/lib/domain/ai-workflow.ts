@@ -17,7 +17,6 @@ import {
   extractTripDetailsWithAI,
   detectEventsWithAI,
   extractContactWithAI,
-  suggestQuoteWithAI,
 } from "../ai/extract";
 import { generateAiReplyWithAI } from "../ai/reply";
 import { hasRealAI } from "../ai";
@@ -225,12 +224,9 @@ export async function analyzeCustomerTurn(params: {
 
   const missingFields = getMissingQuoteFields(tripDetails);
 
-  let quote: QuoteSuggestion | undefined;
-  if (hasRealAI) {
-    quote = await suggestQuoteWithAI(tripDetails, params.configuration);
-  } else {
-    quote = maybeCreateQuoteSuggestion(tripDetails, params.configuration, missingFields);
-  }
+  // Pricing is owned by configured business rules, never invented by the
+  // model. This also removes an entire sequential LLM round trip.
+  const quote = maybeCreateQuoteSuggestion(tripDetails, params.configuration, missingFields);
 
   const bossInboxItems = createBossInboxItems({
     detectedEvents,

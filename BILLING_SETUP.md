@@ -11,6 +11,7 @@ Run these files in order in the Supabase SQL editor:
 1. `003_saas_foundation.sql`
 2. `004_operations.sql`
 3. `005_billing.sql`
+4. `006_security_hardening.sql`
 
 ## 2. Stripe test mode
 
@@ -62,3 +63,6 @@ secret.
 
 The owner opens `/billing`, chooses a paid plan, and is redirected to Stripe
 Checkout. The plan changes only after the signed Webhook is accepted.
+
+This subscription billing packages WorkflowAI itself. Customer trip-payment
+collection remains outside the airport-transfer V1 scope.

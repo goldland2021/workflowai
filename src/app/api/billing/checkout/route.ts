@@ -54,8 +54,8 @@ export async function POST(request: Request) {
     if (!session.url) return Response.json({ error: "Stripe 没有返回 Checkout 地址。" }, { status: 502 });
 
     return Response.json({ url: session.url });
-  } catch (error) {
-    console.error("Failed to create Stripe Checkout session", error);
+  } catch {
+    console.error("Failed to create Stripe Checkout session");
     return Response.json({ error: "暂时无法创建支付页面，请稍后重试。" }, { status: 502 });
   }
 }

@@ -100,7 +100,8 @@ export async function getCompanySaasState(companyId: string): Promise<CompanySaa
       subscriptionCurrentPeriodEnd: row.subscription_current_period_end ?? null,
       cancelAtPeriodEnd: row.cancel_at_period_end ?? false,
     };
-  } catch {
+  } catch (error) {
+    if (process.env.NODE_ENV === "production") throw error;
     // Keep the 003 SaaS foundation usable while 005 billing columns are being
     // rolled out. The full select fails on older databases because PostgREST
     // rejects unknown columns instead of returning partial rows.
@@ -209,7 +210,8 @@ export async function incrementUsageCounter(
       }),
     });
     return;
-  } catch {
+  } catch (error) {
+    if (process.env.NODE_ENV === "production") throw error;
     // Keep local development usable before the RPC migration is applied.
     const current = await getUsageCounter(companyId, periodStart);
     const next = { ...current, [metric]: current[metric] + amount };
@@ -289,10 +291,18 @@ export async function revokeAuthSession(companyId: string, token: string): Promi
 }
 
 export async function getWidgetSettings(companyId: string): Promise<Pick<CompanySaasState, "allowedWidgetOrigins" | "widgetTokenVersion">> {
-  const state = await getCompanySaasState(companyId);
+  const response = await supabaseFetch(
+    `/rest/v1/companies?id=eq.${encodeURIComponent(companyId)}&select=allowed_widget_origins,widget_token_version&limit=1`,
+  );
+  const rows = (await response.json()) as Array<{
+    allowed_widget_origins?: string[] | null;
+    widget_token_version?: number | null;
+  }>;
+  const settings = rows[0];
+  if (!settings) throw new Error("Widget company not found");
   return {
-    allowedWidgetOrigins: state.allowedWidgetOrigins,
-    widgetTokenVersion: state.widgetTokenVersion,
+    allowedWidgetOrigins: settings.allowed_widget_origins ?? [],
+    widgetTokenVersion: settings.widget_token_version ?? 1,
   };
 }
 
@@ -320,8 +330,20 @@ export async function createAuthToken(companyId: string, kind: "password_reset" 
 }
 
 export async function consumeAuthToken(token: string, kind: "password_reset" | "email_verification"): Promise<string | null> {
+  const tokenHash = hashToken(token);
+  try {
+    const response = await supabaseFetch("/rest/v1/rpc/consume_auth_token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ p_token_hash: tokenHash, p_kind: kind }),
+    });
+    return (await response.json()) as string | null;
+  } catch (error) {
+    if (process.env.NODE_ENV === "production") throw error;
+  }
+
   const res = await supabaseFetch(
-    `/rest/v1/auth_tokens?token_hash=eq.${encodeURIComponent(hashToken(token))}&kind=eq.${encodeURIComponent(kind)}&used_at=is.null&expires_at=gt.${encodeURIComponent(new Date().toISOString())}&limit=1`,
+    `/rest/v1/auth_tokens?token_hash=eq.${encodeURIComponent(tokenHash)}&kind=eq.${encodeURIComponent(kind)}&used_at=is.null&expires_at=gt.${encodeURIComponent(new Date().toISOString())}&limit=1`,
   );
   const rows = (await res.json()) as Array<{ id: string; company_id: string }>;
   const row = rows[0];

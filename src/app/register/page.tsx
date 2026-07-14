@@ -63,12 +63,13 @@ export default function RegisterPage() {
           />
         </label>
         <label className="mt-4 grid gap-2 text-sm font-medium text-stone-700">
-          密码（至少 8 位）
+          密码（至少 8 位，包含字母和数字）
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             minLength={8}
+            pattern="(?=.*[A-Za-z])(?=.*[0-9]).{8,}"
             className="h-10 rounded-md border border-stone-300 px-3 text-sm focus:border-emerald-600 focus:outline-none focus:ring-1 focus:ring-emerald-600"
             required
           />

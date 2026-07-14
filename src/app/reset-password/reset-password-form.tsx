@@ -11,8 +11,8 @@ export default function ResetPasswordForm({ token }: { token: string }) {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!token || password !== confirmed) {
-      setMessage("链接无效或两次密码不一致。");
+    if (!token || password !== confirmed || !/[A-Za-z]/.test(password) || !/[0-9]/.test(password)) {
+      setMessage("请确认链接有效、两次密码一致，并使用至少 8 位且包含字母和数字的密码。");
       return;
     }
 
@@ -36,12 +36,12 @@ export default function ResetPasswordForm({ token }: { token: string }) {
       <form onSubmit={handleSubmit} className="w-full max-w-sm rounded-lg border border-stone-300 bg-white p-6 shadow-sm">
         <h1 className="mb-6 text-xl font-semibold text-stone-900">设置新密码</h1>
         <label className="grid gap-2 text-sm font-medium text-stone-700">
-          新密码
-          <input type="password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} className="h-10 rounded-md border border-stone-300 px-3 text-sm" required />
+          新密码（至少 8 位，包含字母和数字）
+          <input type="password" minLength={8} pattern="(?=.*[A-Za-z])(?=.*[0-9]).{8,}" value={password} onChange={(event) => setPassword(event.target.value)} className="h-10 rounded-md border border-stone-300 px-3 text-sm" required />
         </label>
         <label className="mt-4 grid gap-2 text-sm font-medium text-stone-700">
           确认密码
-          <input type="password" minLength={8} value={confirmed} onChange={(event) => setConfirmed(event.target.value)} className="h-10 rounded-md border border-stone-300 px-3 text-sm" required />
+          <input type="password" minLength={8} pattern="(?=.*[A-Za-z])(?=.*[0-9]).{8,}" value={confirmed} onChange={(event) => setConfirmed(event.target.value)} className="h-10 rounded-md border border-stone-300 px-3 text-sm" required />
         </label>
         {message && <p className="mt-3 text-sm text-stone-600">{message}</p>}
         <button type="submit" disabled={submitting || !token} className="mt-4 h-10 w-full rounded-md bg-stone-900 text-sm font-semibold text-white disabled:opacity-50">

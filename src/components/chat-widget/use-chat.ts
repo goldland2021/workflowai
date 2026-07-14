@@ -83,7 +83,7 @@ export function useChat(
     const cid = getConversationId(companyId);
     if (!cid) return;
 
-    loadConversationHistory({ conversationId: cid, companyId }, apiEndpoint).then((data) => {
+    loadConversationHistory({ conversationId: cid, companyId, widgetToken, widgetOrigin }, apiEndpoint).then((data) => {
       if (data.messages.length > 0) {
         const history: ChatMessage[] = data.messages.map((m) => ({
           id: m.id,
@@ -94,7 +94,7 @@ export function useChat(
         setMessages(history);
       }
     }).catch(() => {});
-  }, [apiEndpoint, companyId]);
+  }, [apiEndpoint, companyId, widgetOrigin, widgetToken]);
 
   const toggleOpen = useCallback(() => setIsOpen((p) => !p), []);
   const clearError = useCallback(() => setError(null), []);

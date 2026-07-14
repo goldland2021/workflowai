@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# WorkflowAI
 
-## Getting Started
+WorkflowAI is an AI front office for airport-transfer businesses. It trains on
+structured company rules, serves a public website widget, collects trip and
+contact details, escalates commercial decisions to the owner, and prepares
+booking confirmations.
 
-First, run the development server:
+Production: https://workflowai-henna.vercel.app
+
+## Product flow
+
+1. The owner registers and trains the AI employee.
+2. A visitor chats through the signed website widget.
+3. The AI collects booking fields and detects operational events.
+4. Pricing rules create a quote suggestion for the Boss Inbox.
+5. The owner approves, edits, or rejects the decision.
+6. The app creates the customer-facing booking confirmation and tracks follow-up work.
+
+The LLM assists with extraction, event detection, and natural replies. Structured
+business rules remain the source of truth for pricing, escalation, and workflow state.
+
+## Stack
+
+- Next.js App Router, React, TypeScript, and Tailwind CSS
+- Supabase Postgres for tenant-owned records and revocable sessions
+- DeepSeek by default, with OpenAI-compatible cloud/local providers supported
+- Stripe Checkout, Billing Portal, and signed webhooks for SaaS subscriptions
+- Vitest unit tests, Playwright browser tests, and GitHub Actions CI
+
+## Local setup
 
 ```bash
+npm install
+copy .env.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Run `supabase/migrations/001_initial_schema.sql` through
+`006_security_hardening.sql` in order before testing authenticated or persistent
+workflows. Then open http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+At minimum, configure:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=...
+SESSION_SECRET=...
+DEEPSEEK_API_KEY=...
+```
 
-## Learn More
+Optional production integrations are documented in `.env.example`,
+`AI_INTEGRATION.md`, and `BILLING_SETUP.md`.
 
-To learn more about Next.js, take a look at the following resources:
+## Verification
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm test
+npm run lint
+npm run build
+npm run test:e2e
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Pull requests and pushes to `main` run the same checks in GitHub Actions.
 
-## Deploy on Vercel
+## Security model
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Every application query is scoped to a company ID.
+- Public widgets require a signed, versioned token and an allowed origin.
+- Database RLS blocks direct `anon` and `authenticated` access to private tables.
+- Production rate limits are atomic and shared through Supabase.
+- Session revocation, usage checks, and customer-message persistence fail closed in production.
+- Customer messages and contact identifiers are not written to application logs.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+See `PRODUCTION_READINESS.md` for the release checklist and remaining external
+service setup.

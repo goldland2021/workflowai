@@ -32,9 +32,9 @@ export async function PUT(request: Request) {
   try {
     await saveBusinessConfig(companyId, parsed.data);
     return NextResponse.json({ ok: true });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "Unknown error" },
+      { ok: false, error: "Unable to save business configuration" },
       { status: 500 },
     );
   }

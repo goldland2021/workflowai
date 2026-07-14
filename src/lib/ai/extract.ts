@@ -63,8 +63,8 @@ export async function extractTripDetailsWithAI(
         ...(extracted.specialRequests || []),
       ].filter((v, i, arr) => arr.indexOf(v) === i), // dedupe
     };
-  } catch (e) {
-    console.warn('LLM trip extraction failed, returning current details', e);
+  } catch {
+    console.warn('LLM trip extraction failed, returning current details');
     return current;
   }
 }
@@ -103,8 +103,8 @@ export async function detectEventsWithAI(
       severity: ev.severity,
       status: 'pending' as const,
     }));
-  } catch (e) {
-    console.warn('LLM event detection failed', e);
+  } catch {
+    console.warn('LLM event detection failed');
     return [];
   }
 }
@@ -166,8 +166,8 @@ export async function suggestQuoteWithAI(
       ),
       includedFees: ['Tolls', 'Parking fees', 'Taxes'],
     };
-  } catch (e) {
-    console.warn('LLM quote suggestion failed', e);
+  } catch {
+    console.warn('LLM quote suggestion failed');
     return undefined;
   }
 }

@@ -59,9 +59,9 @@ export async function POST(request: Request) {
       });
     }
     return NextResponse.json({ ok: true });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "Unknown error" },
+      { ok: false, error: "Unable to update booking" },
       { status: 500 },
     );
   }

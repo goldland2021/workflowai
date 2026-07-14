@@ -1,145 +1,86 @@
 # AI Employee Technical Architecture
 
-Version: 1.0
+Version: 2.0
 
-Status: V1 Development Baseline
+Status: Production baseline
 
----
-
-# 1. Stack
-
-V1 uses:
-
-- Next.js
-- TypeScript
-- Tailwind CSS
-- React Server Components where practical
-- Local in-memory/domain data for the first prototype
-
-This keeps the first version fast to build while preserving a clean path to a real database and provider integrations later.
-
----
-
-# 2. V1 Architecture
+## 1. Runtime architecture
 
 ```text
-Next.js App
-↓
-Domain Modules
-↓
-Structured Business Configuration
-↓
-AI Logic Modules
-↓
-Owner Workflows
+Owner workspace / signed public widget
+  -> Next.js App Router and Route Handlers
+  -> authentication, widget authorization, shared rate limits, usage gate
+  -> domain workflow engine
+  -> structured AI modules + deterministic business rules
+  -> Supabase Postgres
+  -> Stripe webhooks for subscription state
 ```
 
-The first implementation should prove the core product loop before adding production infrastructure.
+The browser never receives provider or service-role secrets. AI, database, and
+billing calls run in server-only modules or Route Handlers.
 
----
+## 2. Domain ownership
 
-# 3. Domain Modules
+Domain modules under `src/lib/domain` own trip state, missing-field rules,
+events, quote suggestions, Boss Inbox records, and booking confirmation rules.
+UI components display and collect data but do not decide commercial outcomes.
 
-Core domain modules should live outside UI components.
+The LLM is used for structured trip/contact/event extraction and natural reply
+generation. Pricing comes only from configured pricing rules. Owner approval is
+required before a suggestion becomes a commercial decision.
 
-Required V1 domains:
+## 3. Data and tenant isolation
 
-- Company
-- Business Rules
-- Company Knowledge
-- Conversation
-- Contact Capture
-- Event Detection
-- Quote Suggestion
-- Boss Inbox
-- Booking Confirmation
-- Driver Details
-- Receipt Request
-- Customer Timeline
+Supabase stores companies, conversations, messages, bookings, Boss Inbox items,
+business configuration, usage counters, sessions, auth tokens, and AI failures.
 
-UI components may display and collect data, but they should not own core business rules.
+Isolation is enforced twice:
 
----
+1. Application queries include the authenticated or widget-authorized company ID.
+2. Migration `006_security_hardening.sql` enables RLS and revokes direct
+   `anon`/`authenticated` access to private tables.
 
-# 4. AI Module Shape
+Only the server-side service role may access those records. Password-reset and
+email-verification tokens are consumed atomically.
 
-AI behavior should be separated by responsibility:
+## 4. Public widget boundary
 
-- Conversation AI
-- Contact Capture AI
-- Event Detection AI
-- Quote Suggestion AI
-- Booking Confirmation AI
-- Operations Event AI
+The embed endpoint issues an HMAC-signed, versioned widget token. Both message
+submission and history loading verify the token and configured origin. Widget
+credentials are sent in headers for history requests instead of URL query logs.
 
-For the first prototype, these modules may use deterministic rule-based logic to simulate the intended AI behavior.
+## 5. Availability and abuse protection
 
-When OpenAI API integration is added, it should replace or enhance these modules without rewriting the UI workflow.
+Production request limits use an atomic Supabase RPC shared by all Vercel
+instances. Authentication endpoints have tighter IP and account/token limits.
+Local development falls back to an in-memory limiter when Supabase is absent.
 
----
+Security boundaries fail closed in production: an unavailable revocation check,
+usage gate, shared limiter, or initial message write does not silently proceed.
 
-# 5. Data Strategy
+## 6. AI execution
 
-V1 prototype:
+Trip extraction, contact extraction, and event detection run concurrently. Once
+structured state is available, deterministic pricing rules produce any quote
+suggestion and the reply model writes the customer-facing response. Removing an
+LLM pricing round trip reduces latency and prevents model-invented prices.
 
-- Uses typed seed data and local domain functions.
-- Keeps data structures close to future database tables.
+Provider failures return a controlled 503 response and are recorded without raw
+customer content. When no provider is configured, deterministic development
+fallbacks keep the core workflow testable.
 
-Future production:
+## 7. Billing
 
-- Postgres
-- Row-level company isolation
-- pgvector or equivalent vector search for knowledge retrieval
-- Object storage for documents
+Stripe Checkout creates recurring subscriptions. Signed webhooks are the source
+of truth for plan state, and the Billing Portal handles existing subscriptions.
+This is WorkflowAI SaaS billing, not airport-transfer trip-payment collection.
 
-Important rule:
+## 8. Verification and delivery
 
-Do not design UI around temporary mock data shapes. Mock data should follow the intended domain model.
+Vitest covers domain and security behavior. Playwright covers signed-out routing,
+public pages, private API protection, billing protection, and widget-history
+authorization. GitHub Actions runs unit tests, lint, build, and browser tests on
+pull requests and `main`.
 
----
-
-# 6. Channel Strategy
-
-V1 required channel:
-
-- Website Widget
-
-Future channels:
-
-- WhatsApp
-- Telegram
-- Email
-- Phone AI
-
-Conversation records should include a channel field from the beginning.
-
----
-
-# 7. Security Direction
-
-V1 prototype may use local placeholder data.
-
-Production must enforce:
-
-- Company-level access control
-- Secure customer contact storage
-- Environment variables for secrets
-- No cross-company data leakage
-
----
-
-# 8. First Development Slice
-
-The first implementation slice should include:
-
-1. App shell
-2. Dashboard overview
-3. Train Employee page
-4. Company Knowledge preview
-5. Conversation Test Lab
-6. Boss Inbox
-7. Booking Confirmation preview
-8. Driver Details preview
-9. Receipt and change-request tracking
-
-This gives the product owner a visible end-to-end V1 loop before production integrations are added.
+Vercel deploys the production application after the required Supabase migration
+and environment variables are in place.

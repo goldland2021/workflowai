@@ -31,6 +31,8 @@ export async function loadConversationHistory(params: {
   sessionId?: string;
   conversationId?: string;
   companyId?: string;
+  widgetToken?: string;
+  widgetOrigin?: string;
 }, apiBaseUrl?: string): Promise<{ messages: Array<{ id: string; role: string; text: string; created_at: string }>; conversationId: string | null }> {
   const query = new URLSearchParams();
   if (params.sessionId) query.set("sessionId", params.sessionId);
@@ -43,6 +45,10 @@ export async function loadConversationHistory(params: {
 
   const response = await fetch(buildApiUrl(`/api/conversation/analyze?${query.toString()}`, apiBaseUrl), {
     method: "GET",
+    headers: {
+      ...(params.widgetToken ? { "X-WorkflowAI-Widget-Token": params.widgetToken } : {}),
+      ...(params.widgetOrigin ? { "X-WorkflowAI-Widget-Origin": params.widgetOrigin } : {}),
+    },
   });
 
   if (!response.ok) {

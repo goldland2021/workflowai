@@ -89,7 +89,7 @@ V1 must not include:
 - Advanced workflow builder
 - Full CRM system
 - Full social media management
-- Stripe payments
+- Airport-transfer trip-payment collection
 - Automated refunds
 - Automated discounts
 - Automated cancellation approval

@@ -7,11 +7,12 @@ import { hashPassword } from "@/lib/auth/password";
 import { isConfigured } from "@/lib/supabase/client";
 import { createCompany, getCompanyByEmail } from "@/lib/supabase/database";
 import { createAuthToken, storeAuthSession } from "@/lib/supabase/saas";
+import { checkAuthRateLimit } from "@/lib/auth/rate-limit";
 
 const RegisterRequestSchema = z.object({
   companyName: z.string().trim().min(1).max(200),
   email: z.string().trim().toLowerCase().email().max(200),
-  password: z.string().min(8).max(200),
+  password: z.string().min(8).max(200).regex(/[A-Za-z]/).regex(/[0-9]/),
 });
 
 export async function POST(request: Request) {
@@ -28,7 +29,16 @@ export async function POST(request: Request) {
 
   const parsed = RegisterRequestSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ ok: false, error: "请填写完整的注册信息（密码至少8位）" }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "请填写完整信息，密码至少8位并包含字母和数字" }, { status: 400 });
+  }
+
+  if (!(await checkAuthRateLimit(request, {
+    action: "register",
+    ip: { windowMs: 60 * 60_000, maxRequests: 5 },
+    identifier: parsed.data.email,
+    identifierLimit: { windowMs: 60 * 60_000, maxRequests: 3 },
+  }))) {
+    return NextResponse.json({ ok: false, error: "Too many registration attempts" }, { status: 429 });
   }
 
   const { companyName, email, password } = parsed.data;
@@ -49,8 +59,8 @@ export async function POST(request: Request) {
         token,
         new Date(Date.now() + sessionMaxAgeSeconds * 1000).toISOString(),
       );
-    } catch {
-      // Existing installations can continue until migration 003 is applied.
+    } catch (error) {
+      if (process.env.NODE_ENV === "production") throw error;
     }
 
     try {
@@ -74,9 +84,9 @@ export async function POST(request: Request) {
     });
 
     return NextResponse.json({ ok: true });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "Unknown error" },
+      { ok: false, error: "Unable to create account" },
       { status: 500 },
     );
   }

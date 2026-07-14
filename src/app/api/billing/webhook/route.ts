@@ -51,8 +51,8 @@ export async function POST(request: Request) {
   let event: Stripe.Event;
   try {
     event = getStripe().webhooks.constructEvent(payload, signature, webhookSecret);
-  } catch (error) {
-    console.warn("Invalid Stripe webhook signature", error);
+  } catch {
+    console.warn("Invalid Stripe webhook signature");
     return Response.json({ error: "Invalid webhook signature." }, { status: 400 });
   }
 
@@ -100,8 +100,8 @@ export async function POST(request: Request) {
       default:
         break;
     }
-  } catch (error) {
-    console.error("Failed to process Stripe webhook", event.type, error);
+  } catch {
+    console.error("Failed to process Stripe webhook", event.type);
     return Response.json({ error: "Webhook processing failed." }, { status: 500 });
   }
 

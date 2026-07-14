@@ -47,9 +47,9 @@ export async function POST(request: Request) {
       parsed.data.quote as QuoteSuggestion | undefined,
     );
     return NextResponse.json({ ok: true });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "Unknown error" },
+      { ok: false, error: "Unable to update inbox item" },
       { status: 500 }
     );
   }
