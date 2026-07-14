@@ -194,6 +194,21 @@ export async function analyzeCustomerTurn(params: {
   recentMessages?: ConversationMessage[];
 }): Promise<WorkflowResult> {
   const now = new Date();
+  const fastFaqReply = getFastFaqReply(params.message, params.configuration);
+  if (fastFaqReply) {
+    return {
+      aiMessage: {
+        id: `msg_ai_${Date.now()}`,
+        role: "ai",
+        text: fastFaqReply,
+        createdAt: now.toISOString(),
+        channel: "website_widget",
+      },
+      tripDetails: params.currentTripDetails,
+      detectedEvents: [],
+      bossInboxItems: [],
+    };
+  }
 
   let tripDetails: TripDetails;
   let contact: CapturedContact | undefined;
@@ -280,6 +295,43 @@ export async function analyzeCustomerTurn(params: {
     detectedEvents,
     bossInboxItems,
   };
+}
+
+/**
+ * Answers a small set of read-only policy questions directly from structured
+ * company configuration. Commercial requests and non-Chinese messages keep
+ * using the full workflow so this fast path cannot bypass extraction or owner
+ * approval.
+ */
+export function getFastFaqReply(
+  message: string,
+  configuration: BusinessConfiguration,
+): string | undefined {
+  if (detectCustomerLang(message, configuration) !== "zh") return undefined;
+
+  const compact = message.toLowerCase().replaceAll(/\s+/gu, "");
+  const isQuestion = /[?？]|吗|嗎|么|麼|如何|怎么|怎麼|多久|多长|多長|能否|可以|是否|包含/u.test(compact);
+  if (!isQuestion) return undefined;
+
+  const faqIntents: Array<{ message: RegExp; faq: RegExp }> = [
+    { message: /等待|等候|候车|候車/u, faq: /waiting|等待|等候/iu },
+    { message: /怎么付|怎麼付|如何支付|付款方式|支付方式/u, faq: /payment|支付|付款/iu },
+    { message: /儿童座椅|兒童座椅|婴儿座椅|嬰兒座椅|安全座椅/u, faq: /child|儿童|兒童|婴儿|嬰兒|座椅/iu },
+  ];
+
+  for (const intent of faqIntents) {
+    if (!intent.message.test(compact)) continue;
+    const faq = configuration.faq.find(
+      (item) => intent.faq.test(item.id) || intent.faq.test(item.question),
+    );
+    if (faq) return faq.answer;
+  }
+
+  if (/高速费|高速費|过路费|過路費|停车费|停車費|费用包含|費用包含|包含.*费|包含.*費/u.test(compact)) {
+    return "高速费、停车费和税费会在老板确认的报价中明确列出，最终以老板批准的报价为准。";
+  }
+
+  return undefined;
 }
 
 function mergeTripDetails(
