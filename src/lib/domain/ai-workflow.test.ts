@@ -47,6 +47,21 @@ describe("getFastFaqReply", () => {
     expect(getFastFaqReply("How long can the driver wait?", airportTransferConfiguration)).toBeUndefined();
     expect(getFastFaqReply("我已经付款，请确认。", airportTransferConfiguration)).toBeUndefined();
   });
+
+  it("does not trust a stale FAQ id after the owner changes its content", () => {
+    const editedConfiguration = {
+      ...airportTransferConfiguration,
+      faq: [
+        {
+          id: "faq_waiting",
+          question: "可以安排哪些包车服务？",
+          answer: "机场接送和私人包车。",
+        },
+      ],
+    };
+
+    expect(getFastFaqReply("司机可以等待多久？", editedConfiguration)).toBeUndefined();
+  });
 });
 
 describe("analyzeCustomerTurn - quote suggestion rules", () => {
