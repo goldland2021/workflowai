@@ -28,6 +28,7 @@ test("private APIs reject signed-out requests", async ({ request }) => {
     await request.put("/api/business-config", { data: {} }),
     await request.post("/api/inbox", { data: {} }),
     await request.get("/api/usage"),
+    await request.get("/api/audit"),
   ];
 
   for (const response of responses) {

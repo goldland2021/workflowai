@@ -2,11 +2,18 @@
 
 ## Required database state
 
-Run every SQL file in `supabase/migrations` in numeric order. Migration 006 is
-required before deploying the matching application code because production rate
-limiting and atomic auth-token consumption fail closed when their RPCs are absent.
-Migration 007 stores the customer's established conversation language so later
-contact-only turns cannot switch the reply language.
+Run every SQL file in `supabase/migrations` in numeric order. The production
+build runs `npm run check:migrations` automatically. Set
+`CHECK_LIVE_DB=true` in a deployment check when production Supabase credentials
+are available to verify the live schema too. Migration 006 is required before
+deploying the matching application code because production rate limiting and
+atomic auth-token consumption fail closed when their RPCs are absent. Migration
+  007 stores the customer's established conversation language so later
+  contact-only turns cannot switch the reply language. Migration 008 adds
+  database-level conversation/booking/InBox deduplication and atomic usage
+  reservation. Migration 009 adds replay protection for API requests and an
+  owner-operation audit trail. Migration 010 binds quota reservations to
+  idempotency keys.
 
 ## Required Vercel variables
 

@@ -35,9 +35,11 @@ copy .env.example .env.local
 npm run dev
 ```
 
-Run `supabase/migrations/001_initial_schema.sql` through
-`006_security_hardening.sql` in order before testing authenticated or persistent
-workflows. Then open http://localhost:3000.
+Run every SQL file in `supabase/migrations` in numeric order through
+`010_idempotent_usage_reservations.sql` before testing authenticated or
+persistent workflows. `npm run build` checks the migration files automatically;
+run `CHECK_LIVE_DB=true npm run check:migrations` with production Supabase
+credentials to verify the live schema too. Then open http://localhost:3000.
 
 At minimum, configure:
 

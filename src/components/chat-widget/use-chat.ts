@@ -144,6 +144,7 @@ export function useChat(
           languageHint,
         },
         apiEndpoint,
+        customerMsg.id,
       );
 
       if (result.conversationId) {

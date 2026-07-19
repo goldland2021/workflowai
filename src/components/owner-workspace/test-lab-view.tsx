@@ -157,18 +157,22 @@ export function TestLabView({ initialBusinessConfig, aiStatus }: TestLabViewProp
     try {
       const configForPreview = readTrainDraftConfig(initialBusinessConfig);
 
-      const result = await analyzeCustomerTurnOnServer({
-        message: trimmed,
-        currentTripDetails: tripDetails,
-        existingBossItems: previewItems.map((item) => ({
-          status: item.status,
-          type: item.type,
-          event: item.event ? { eventType: item.event.eventType } : undefined,
-        })),
-        recentMessages: messages.slice(-8),
-        businessConfiguration: configForPreview,
-        simulate: true,
-      });
+      const result = await analyzeCustomerTurnOnServer(
+        {
+          message: trimmed,
+          currentTripDetails: tripDetails,
+          existingBossItems: previewItems.map((item) => ({
+            status: item.status,
+            type: item.type,
+            event: item.event ? { eventType: item.event.eventType } : undefined,
+          })),
+          recentMessages: messages.slice(-8),
+          businessConfiguration: configForPreview,
+          simulate: true,
+        },
+        undefined,
+        `test-lab:${turnId}`,
+      );
 
       setMessages((current) => [...current, customerMessage, result.aiMessage]);
       setTripDetails(result.tripDetails);

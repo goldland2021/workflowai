@@ -5,10 +5,12 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "prebuild": "npm run check:migrations",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "check:migrations": "node scripts/check-migrations.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.8",

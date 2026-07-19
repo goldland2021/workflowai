@@ -14,6 +14,155 @@ import type {
   WorkspaceWorkflowRecord,
 } from "@/lib/domain/types";
 
+type RequestIdempotencyRow = {
+  id: string;
+  company_id: string;
+  idempotency_key: string;
+  request_hash: string;
+  status: "processing" | "completed";
+  response_body: unknown;
+  updated_at: string;
+};
+
+export type RequestIdempotencyClaim =
+  | { state: "claimed" }
+  | { state: "replay"; responseBody: unknown }
+  | { state: "in_progress" }
+  | { state: "conflict" };
+
+const IDEMPOTENCY_STALE_AFTER_MS = 10 * 60 * 1000;
+
+function requestIdempotencyPath(companyId: string, key: string): string {
+  return `/rest/v1/request_idempotency?company_id=eq.${encodeURIComponent(companyId)}&idempotency_key=eq.${encodeURIComponent(key)}&limit=1`;
+}
+
+export async function claimRequestIdempotency(
+  companyId: string,
+  idempotencyKey: string,
+  requestHash: string,
+): Promise<RequestIdempotencyClaim> {
+  const insertResponse = await supabaseFetch(
+    "/rest/v1/request_idempotency?on_conflict=company_id,idempotency_key",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Prefer: "resolution=ignore-duplicates,return=representation",
+      },
+      body: JSON.stringify({
+        company_id: companyId,
+        idempotency_key: idempotencyKey,
+        request_hash: requestHash,
+        status: "processing",
+      }),
+    },
+  );
+  const inserted = (await insertResponse.json()) as RequestIdempotencyRow[];
+  if (inserted[0]) return { state: "claimed" };
+
+  const existingResponse = await supabaseFetch(requestIdempotencyPath(companyId, idempotencyKey));
+  const existing = ((await existingResponse.json()) as RequestIdempotencyRow[])[0];
+  if (!existing) throw new Error("Idempotency record could not be recovered.");
+  if (existing.request_hash !== requestHash) return { state: "conflict" };
+  if (existing.status === "completed") {
+    return { state: "replay", responseBody: existing.response_body };
+  }
+
+  if (Date.parse(existing.updated_at) > Date.now() - IDEMPOTENCY_STALE_AFTER_MS) {
+    return { state: "in_progress" };
+  }
+
+  const staleBefore = new Date(Date.now() - IDEMPOTENCY_STALE_AFTER_MS).toISOString();
+  const reclaimResponse = await supabaseFetch(
+    `${requestIdempotencyPath(companyId, idempotencyKey).replace("&limit=1", "")}&status=eq.processing&updated_at=lt.${encodeURIComponent(staleBefore)}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Prefer: "return=representation",
+      },
+      body: JSON.stringify({ updated_at: new Date().toISOString() }),
+    },
+  );
+  const reclaimed = (await reclaimResponse.json()) as RequestIdempotencyRow[];
+  return reclaimed[0] ? { state: "claimed" } : { state: "in_progress" };
+}
+
+export async function completeRequestIdempotency(
+  companyId: string,
+  idempotencyKey: string,
+  requestHash: string,
+  responseBody: unknown,
+): Promise<void> {
+  await supabaseFetch(
+    `${requestIdempotencyPath(companyId, idempotencyKey).replace("&limit=1", "")}&request_hash=eq.${encodeURIComponent(requestHash)}&status=eq.processing`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({
+        status: "completed",
+        response_body: responseBody,
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
+}
+
+export async function releaseRequestIdempotency(
+  companyId: string,
+  idempotencyKey: string,
+  requestHash: string,
+): Promise<void> {
+  await supabaseFetch(
+    `${requestIdempotencyPath(companyId, idempotencyKey).replace("&limit=1", "")}&request_hash=eq.${encodeURIComponent(requestHash)}&status=eq.processing`,
+    { method: "DELETE" },
+  );
+}
+
+export async function recordAuditEvent(params: {
+  companyId: string;
+  actorType: "owner" | "system" | "customer";
+  actorId?: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  await supabaseFetch("/rest/v1/audit_events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+    body: JSON.stringify({
+      company_id: params.companyId,
+      actor_type: params.actorType,
+      actor_id: params.actorId,
+      action: params.action,
+      entity_type: params.entityType,
+      entity_id: params.entityId,
+      metadata: params.metadata ?? {},
+    }),
+  });
+}
+
+export type AuditEventRow = {
+  id: string;
+  company_id: string;
+  actor_type: "owner" | "system" | "customer";
+  actor_id: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export async function getAuditEvents(companyId: string, limit = 100): Promise<AuditEventRow[]> {
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(limit, 200)) : 100;
+  const response = await supabaseFetch(
+    `/rest/v1/audit_events?company_id=eq.${encodeURIComponent(companyId)}&order=created_at.desc&limit=${safeLimit}`,
+  );
+  return (await response.json()) as AuditEventRow[];
+}
+
 // ─── Companies ───
 
 export type CompanyRow = {
@@ -70,7 +219,7 @@ export async function createConversation(
   sessionId: string,
   companyId: string,
   customerLanguage: "zh" | "en" | "ar",
-): Promise<string> {
+): Promise<{ conversation: ConversationRow; created: boolean }> {
   const body = {
     session_id: sessionId,
     company_id: companyId,
@@ -79,11 +228,18 @@ export async function createConversation(
   };
   const res = await supabaseFetch("/rest/v1/conversations", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+    headers: {
+      "Content-Type": "application/json",
+      Prefer: "resolution=ignore-duplicates,return=representation",
+    },
     body: JSON.stringify(body),
   });
   const data = (await res.json()) as ConversationRow[];
-  return data[0]?.id ?? "";
+  if (data[0]) return { conversation: data[0], created: true };
+
+  const existing = await getConversationBySessionId(sessionId, companyId);
+  if (!existing) throw new Error("Conversation could not be created or recovered.");
+  return { conversation: existing, created: false };
 }
 
 export async function updateConversationLanguage(
@@ -135,6 +291,15 @@ export async function getConversationById(
   return data[0] ?? null;
 }
 
+async function getConversationsByIds(companyId: string, ids: string[]): Promise<ConversationRow[]> {
+  if (ids.length === 0) return [];
+  const filter = ids.map((id) => encodeURIComponent(id)).join(",");
+  const res = await supabaseFetch(
+    `/rest/v1/conversations?company_id=eq.${encodeURIComponent(companyId)}&id=in.(${filter})&limit=${ids.length}`,
+  );
+  return (await res.json()) as ConversationRow[];
+}
+
 export async function getConversationsSince(companyId: string, sinceIso: string): Promise<ConversationRow[]> {
   const res = await supabaseFetch(
     `/rest/v1/conversations?company_id=eq.${encodeURIComponent(companyId)}&created_at=gte.${encodeURIComponent(sinceIso)}&order=created_at.desc&limit=200`
@@ -166,18 +331,32 @@ export async function updateConversationContact(
 export type MessageRow = {
   id: string;
   conversation_id: string;
+  idempotency_key: string | null;
   role: string;
   text: string;
   channel: string;
   created_at: string;
 };
 
-export async function saveMessage(conversationId: string, msg: ConversationMessage): Promise<void> {
-  await supabaseFetch("/rest/v1/conversation_messages", {
+export async function saveMessage(
+  conversationId: string,
+  msg: ConversationMessage,
+  idempotencyKey?: string,
+): Promise<void> {
+  const endpoint = idempotencyKey
+    ? "/rest/v1/conversation_messages?on_conflict=conversation_id,idempotency_key"
+    : "/rest/v1/conversation_messages";
+  await supabaseFetch(endpoint, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+    headers: {
+      "Content-Type": "application/json",
+      Prefer: idempotencyKey
+        ? "resolution=ignore-duplicates,return=minimal"
+        : "return=minimal",
+    },
     body: JSON.stringify({
       conversation_id: conversationId,
+      idempotency_key: idempotencyKey,
       role: msg.role,
       text: msg.text,
       channel: msg.channel,
@@ -188,6 +367,15 @@ export async function saveMessage(conversationId: string, msg: ConversationMessa
 export async function getMessages(conversationId: string): Promise<MessageRow[]> {
   const res = await supabaseFetch(
     `/rest/v1/conversation_messages?conversation_id=eq.${encodeURIComponent(conversationId)}&order=created_at.asc&limit=100`
+  );
+  return (await res.json()) as MessageRow[];
+}
+
+async function getMessagesByConversationIds(ids: string[]): Promise<MessageRow[]> {
+  if (ids.length === 0) return [];
+  const filter = ids.map((id) => encodeURIComponent(id)).join(",");
+  const res = await supabaseFetch(
+    `/rest/v1/conversation_messages?conversation_id=in.(${filter})&order=created_at.asc&limit=${ids.length * 100}`,
   );
   return (await res.json()) as MessageRow[];
 }
@@ -303,6 +491,24 @@ export async function getBookingById(bookingId: string, companyId: string): Prom
   return data[0] ?? null;
 }
 
+async function getBookingsByIds(companyId: string, ids: string[]): Promise<BookingRow[]> {
+  if (ids.length === 0) return [];
+  const filter = ids.map((id) => encodeURIComponent(id)).join(",");
+  const res = await supabaseFetch(
+    `/rest/v1/bookings?company_id=eq.${encodeURIComponent(companyId)}&id=in.(${filter})&limit=${ids.length}`,
+  );
+  return (await res.json()) as BookingRow[];
+}
+
+async function getBookingsByConversationIds(companyId: string, ids: string[]): Promise<BookingRow[]> {
+  if (ids.length === 0) return [];
+  const filter = ids.map((id) => encodeURIComponent(id)).join(",");
+  const res = await supabaseFetch(
+    `/rest/v1/bookings?company_id=eq.${encodeURIComponent(companyId)}&conversation_id=in.(${filter})&order=created_at.desc&limit=${ids.length}`,
+  );
+  return (await res.json()) as BookingRow[];
+}
+
 export async function upsertBooking(
   conversationId: string,
   tripDetails: TripDetails,
@@ -328,27 +534,32 @@ export async function upsertBooking(
     estimated_drive_time_min: tripDetails.estimatedDriveTimeMinutes,
   };
 
-  const bookingId = existingBookingId ?? (await getBookingByConversationId(conversationId, companyId))?.id;
-
-  if (bookingId) {
+  if (existingBookingId) {
     await supabaseFetch(
-      `/rest/v1/bookings?id=eq.${encodeURIComponent(bookingId)}&company_id=eq.${encodeURIComponent(companyId)}`,
+      `/rest/v1/bookings?id=eq.${encodeURIComponent(existingBookingId)}&company_id=eq.${encodeURIComponent(companyId)}`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
         body: JSON.stringify({ ...body, updated_at: new Date().toISOString() }),
       }
     );
-    return bookingId;
+    return existingBookingId;
   }
 
-  const res = await supabaseFetch("/rest/v1/bookings", {
+  const res = await supabaseFetch("/rest/v1/bookings?on_conflict=company_id,conversation_id", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+    headers: {
+      "Content-Type": "application/json",
+      Prefer: "resolution=merge-duplicates,return=representation",
+    },
     body: JSON.stringify(body),
   });
   const data = (await res.json()) as BookingRow[];
-  return data[0]?.id ?? "";
+  if (data[0]?.id) return data[0].id;
+
+  const existing = await getBookingByConversationId(conversationId, companyId);
+  if (!existing) throw new Error("Booking could not be created or recovered.");
+  return existing.id;
 }
 
 // ─── Boss Inbox ───
@@ -377,6 +588,14 @@ export type BossInboxRow = {
 export async function createBossInboxItem(
   item: Partial<BossInboxItem> & { bookingId?: string; conversationId: string; companyId: string },
 ): Promise<string> {
+  const dedupeKey = [
+    item.conversationId,
+    item.type,
+    item.decisionType || item.type,
+    item.event?.eventType || "none",
+    item.quote?.serviceType || "none",
+    item.quote?.suggestedPrice ?? "none",
+  ].join("|");
   const body: Record<string, unknown> = {
     conversation_id: item.conversationId,
     booking_id: item.bookingId,
@@ -394,15 +613,25 @@ export async function createBossInboxItem(
     suggested_price: item.quote?.suggestedPrice,
     currency: item.quote?.currency,
     vehicle_type: item.quote?.vehicleType,
+    dedupe_key: dedupeKey,
   };
 
-  const res = await supabaseFetch("/rest/v1/boss_inbox", {
+  const res = await supabaseFetch("/rest/v1/boss_inbox?on_conflict=company_id,dedupe_key", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+    headers: {
+      "Content-Type": "application/json",
+      Prefer: "resolution=ignore-duplicates,return=representation",
+    },
     body: JSON.stringify(body),
   });
   const data = (await res.json()) as BossInboxRow[];
-  return data[0]?.id ?? "";
+  if (data[0]?.id) return data[0].id;
+
+  const existingResponse = await supabaseFetch(
+    `/rest/v1/boss_inbox?company_id=eq.${encodeURIComponent(item.companyId)}&dedupe_key=eq.${encodeURIComponent(dedupeKey)}&limit=1`,
+  );
+  const existing = (await existingResponse.json()) as BossInboxRow[];
+  return existing[0]?.id ?? "";
 }
 
 export async function getBossInboxItems(companyId: string, status?: string): Promise<BossInboxRow[]> {
@@ -530,17 +759,42 @@ function rowToBossInboxItem(row: BossInboxRow): BossInboxItem {
 
 export async function getWorkspaceInboxRecords(companyId: string): Promise<WorkspaceWorkflowRecord[]> {
   const rows = await getBossInboxItems(companyId, "pending");
+  const conversationIds = [...new Set(rows.map((row) => row.conversation_id).filter(Boolean) as string[])];
+  const bookingIds = [...new Set(rows.map((row) => row.booking_id).filter(Boolean) as string[])];
+  const [conversations, directBookings, conversationBookings, messages] = await Promise.all([
+    getConversationsByIds(companyId, conversationIds),
+    getBookingsByIds(companyId, bookingIds),
+    getBookingsByConversationIds(companyId, conversationIds),
+    getMessagesByConversationIds(conversationIds),
+  ]);
+  const conversationsById = new Map(conversations.map((conversation) => [conversation.id, conversation]));
+  const bookingsById = new Map(
+    [...directBookings, ...conversationBookings].map((booking) => [booking.id, booking]),
+  );
+  const bookingsByConversationId = new Map(
+    conversationBookings
+      .filter((booking) => booking.conversation_id)
+      .map((booking) => [booking.conversation_id as string, booking]),
+  );
+  const messagesByConversationId = new Map<string, MessageRow[]>();
+  messages.forEach((message) => {
+    const current = messagesByConversationId.get(message.conversation_id) ?? [];
+    current.push(message);
+    messagesByConversationId.set(message.conversation_id, current);
+  });
 
-  return Promise.all(rows.map(async (row) => {
+  return rows.map((row) => {
     const conversation = row.conversation_id
-      ? await getConversationById(row.conversation_id, companyId)
+      ? conversationsById.get(row.conversation_id) ?? null
       : null;
     const booking = row.booking_id
-      ? await getBookingById(row.booking_id, companyId)
+      ? bookingsById.get(row.booking_id) ?? null
       : row.conversation_id
-        ? await getBookingByConversationId(row.conversation_id, companyId)
+        ? bookingsByConversationId.get(row.conversation_id) ?? null
         : null;
-    const messages = conversation ? await getMessages(conversation.id) : [];
+    const conversationMessages = conversation
+      ? messagesByConversationId.get(conversation.id) ?? []
+      : [];
     const tripDetails = booking ? bookingRowToTripDetails(booking) : {};
     const contact = conversation?.contact_method && conversation.contact_value
       ? { method: conversation.contact_method as CapturedContact["method"], value: conversation.contact_value }
@@ -567,7 +821,7 @@ export async function getWorkspaceInboxRecords(companyId: string): Promise<Works
         id: booking?.id ?? bookingSummary.id,
         confirmationText: booking?.confirmation_text ?? bookingSummary.confirmationText,
       },
-      messages: messages.map((message) => ({
+      messages: conversationMessages.map((message) => ({
         id: message.id,
         role: message.role as ConversationMessage["role"],
         text: message.text,
@@ -575,7 +829,7 @@ export async function getWorkspaceInboxRecords(companyId: string): Promise<Works
         channel: message.channel as ConversationMessage["channel"],
       })),
     } satisfies WorkspaceWorkflowRecord;
-  }));
+  });
 }
 
 export async function updateBossInboxStatus(
@@ -584,11 +838,15 @@ export async function updateBossInboxStatus(
   companyId: string,
   quote?: QuoteSuggestion,
 ): Promise<void> {
-  await supabaseFetch(
-    `/rest/v1/boss_inbox?id=eq.${encodeURIComponent(id)}&company_id=eq.${encodeURIComponent(companyId)}`,
+  if (status === "approved" && !quote) {
+    throw new Error("Approved Boss Inbox item requires a quote.");
+  }
+
+  const updateResponse = await supabaseFetch(
+    `/rest/v1/boss_inbox?id=eq.${encodeURIComponent(id)}&company_id=eq.${encodeURIComponent(companyId)}&status=eq.pending`,
     {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      headers: { "Content-Type": "application/json", Prefer: "return=representation" },
       body: JSON.stringify({
         status,
         suggested_price: quote?.suggestedPrice,
@@ -599,6 +857,17 @@ export async function updateBossInboxStatus(
       }),
     },
   );
+  const updatedRows = (await updateResponse.json()) as BossInboxRow[];
+  if (!updatedRows[0]) throw new Error("Boss Inbox item is no longer pending.");
+
+  await recordAuditEvent({
+    companyId,
+    actorType: "owner",
+    action: "boss_inbox.status_changed",
+    entityType: "boss_inbox",
+    entityId: id,
+    metadata: { status },
+  }).catch(() => console.warn("Failed to record Boss Inbox audit event"));
 
   if (status !== "approved") return;
 
@@ -638,6 +907,15 @@ export async function updateBossInboxStatus(
       }),
     },
   );
+
+  await recordAuditEvent({
+    companyId,
+    actorType: "owner",
+    action: "booking.quote_approved",
+    entityType: "booking",
+    entityId: booking.id,
+    metadata: { inboxId: id, currency: quote.currency },
+  }).catch(() => console.warn("Failed to record quote approval audit event"));
 }
 
 export async function updateBookingFulfillment(params: {
@@ -689,6 +967,19 @@ export async function updateBookingFulfillment(params: {
       }),
     },
   );
+
+  await recordAuditEvent({
+    companyId: params.companyId,
+    actorType: "owner",
+    action: "booking.fulfillment_updated",
+    entityType: "booking",
+    entityId: booking.id,
+    metadata: {
+      hasDriverDetails: Boolean(driver),
+      hasPaymentMethod: Boolean(paymentMethod),
+      receiptRequested: receipt.needed,
+    },
+  }).catch(() => console.warn("Failed to record fulfillment audit event"));
 }
 
 export async function recordBookingConfirmationSent(params: {
@@ -697,6 +988,9 @@ export async function recordBookingConfirmationSent(params: {
 }): Promise<void> {
   const booking = await getBookingById(params.bookingId, params.companyId);
   if (!booking?.conversation_id) throw new Error("Booking conversation not found");
+  if (booking.status !== "ready" || booking.approved_price == null) {
+    throw new Error("Booking is not ready for customer confirmation");
+  }
 
   const conversation = await getConversationById(booking.conversation_id, params.companyId);
   if (!conversation) throw new Error("Booking conversation not found");
@@ -736,7 +1030,16 @@ export async function recordBookingConfirmationSent(params: {
     text: confirmationText,
     createdAt: new Date().toISOString(),
     channel: "website_widget",
-  });
+  }, `booking-confirmation:${booking.id}`);
+
+  await recordAuditEvent({
+    companyId: params.companyId,
+    actorType: "owner",
+    action: "booking.confirmation_recorded",
+    entityType: "booking",
+    entityId: booking.id,
+    metadata: { messageIdempotencyKey: `booking-confirmation:${booking.id}` },
+  }).catch(() => console.warn("Failed to record confirmation audit event"));
 }
 
 // ─── Business Config ───

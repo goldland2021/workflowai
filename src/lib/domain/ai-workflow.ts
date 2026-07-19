@@ -20,6 +20,7 @@ import {
 } from "../ai/extract";
 import { generateAiReplyWithAI } from "../ai/reply";
 import { hasRealAI } from "../ai";
+import { redactContactDetails } from "../ai/pii";
 import { resolveConversationLang, type PromptLang } from "../ai/prompts/templates";
 
 const eventKeywords: Array<{
@@ -220,18 +221,20 @@ export async function analyzeCustomerTurn(params: {
   let tripDetails: TripDetails;
   let contact: CapturedContact | undefined;
   let detectedEvents: DetectedEvent[];
+  const deterministicContact = extractContact(params.message);
+  const promptMessage = redactContactDetails(params.message);
 
   if (hasRealAI) {
     // Prefer real LLM with structured outputs (per project architecture rules)
     const [aiTripDetails, aiContact, aiDetectedEvents] = await Promise.all([
-      extractTripDetailsWithAI(params.message, params.currentTripDetails, params.configuration),
-      extractContactWithAI(params.message),
-      detectEventsWithAI(params.message, params.configuration),
+      extractTripDetailsWithAI(promptMessage, params.currentTripDetails, params.configuration),
+      deterministicContact ? Promise.resolve(undefined) : extractContactWithAI(params.message),
+      detectEventsWithAI(promptMessage, params.configuration),
     ]);
     // Keep critical booking fields deterministic even when structured model
     // extraction is temporarily unavailable or returns an incomplete delta.
     tripDetails = mergeTripDetails(aiTripDetails, params.message, params.currentTripDetails);
-    contact = aiContact ?? extractContact(params.message);
+    contact = deterministicContact ?? aiContact;
     detectedEvents = aiDetectedEvents;
   } else {
     // Fallback to original rule-based logic
@@ -266,14 +269,17 @@ export async function analyzeCustomerTurn(params: {
   let aiMessage: ConversationMessage;
   if (hasRealAI) {
     const text = await generateAiReplyWithAI({
-      customerMessage: params.message,
+      customerMessage: promptMessage,
       tripDetails,
       contact,
       detectedEvents,
       missingFields,
       quote,
       configuration: params.configuration,
-      recentMessages: params.recentMessages,
+      recentMessages: params.recentMessages?.map((message) => ({
+        ...message,
+        text: redactContactDetails(message.text),
+      })),
       customerLanguage: lang,
     });
     aiMessage = {

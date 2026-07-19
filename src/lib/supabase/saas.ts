@@ -252,17 +252,66 @@ export async function getUsageSummary(companyId: string): Promise<UsageSummary> 
   };
 }
 
-export async function canConsumeUsage(companyId: string, metric: UsageMetric, amount = 1): Promise<{
+export async function canConsumeUsage(
+  companyId: string,
+  metric: UsageMetric,
+  amount = 1,
+  idempotencyKey?: string,
+): Promise<{
   allowed: boolean;
   reason?: "trial_expired" | "limit_reached";
   summary: UsageSummary;
 }> {
   const summary = await getUsageSummary(companyId);
   if (summary.trialExpired) return { allowed: false, reason: "trial_expired", summary };
-  if (summary.usage[metric] + amount > summary.limits[metric]) {
-    return { allowed: false, reason: "limit_reached", summary };
+
+  try {
+    const response = await supabaseFetch("/rest/v1/rpc/consume_company_usage_idempotent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        p_company_id: companyId,
+        p_period_start: summary.periodStart,
+        p_metric: metric,
+        p_amount: amount,
+        p_limit: summary.limits[metric],
+        p_idempotency_key: idempotencyKey || null,
+      }),
+    });
+    const rows = (await response.json()) as Array<{
+      allowed: boolean;
+      current_count: number;
+      limit_count: number;
+      reason: string | null;
+    }>;
+    const result = rows[0];
+    if (!result) throw new Error("Atomic usage RPC returned no result.");
+
+    const nextSummary = {
+      ...summary,
+      usage: { ...summary.usage, [metric]: result.current_count },
+    };
+    return {
+      allowed: result.allowed,
+      reason: result.allowed ? undefined : "limit_reached",
+      summary: nextSummary,
+    };
+  } catch (error) {
+    if (process.env.NODE_ENV === "production") throw error;
+
+    // Local development remains usable before migration 008 is applied.
+    if (summary.usage[metric] + amount > summary.limits[metric]) {
+      return { allowed: false, reason: "limit_reached", summary };
+    }
+    await incrementUsageCounter(companyId, metric, amount, summary.periodStart);
+    return {
+      allowed: true,
+      summary: {
+        ...summary,
+        usage: { ...summary.usage, [metric]: summary.usage[metric] + amount },
+      },
+    };
   }
-  return { allowed: true, summary };
 }
 
 export async function storeAuthSession(companyId: string, token: string, expiresAt: string): Promise<void> {

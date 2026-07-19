@@ -1,0 +1,83 @@
+import { readdir, readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+
+const root = resolve(import.meta.dirname, "..");
+const migrationsDirectory = resolve(root, "supabase", "migrations");
+const requiredMigrations = [
+  "001_initial_schema.sql",
+  "002_multi_tenant.sql",
+  "003_saas_foundation.sql",
+  "004_operations.sql",
+  "005_billing.sql",
+  "006_security_hardening.sql",
+  "007_conversation_language.sql",
+  "008_idempotency_and_atomic_usage.sql",
+  "009_request_idempotency_and_audit.sql",
+  "010_idempotent_usage_reservations.sql",
+];
+
+const files = (await readdir(migrationsDirectory)).filter((file) => file.endsWith(".sql"));
+const missing = requiredMigrations.filter((file) => !files.includes(file));
+const numberedFiles = files
+  .map((file) => ({ file, number: Number.parseInt(file.split("_")[0], 10) }))
+  .filter(({ number }) => Number.isFinite(number))
+  .sort((a, b) => a.number - b.number);
+const numbered = numberedFiles.map(({ number }) => number);
+const maxMigration = Math.max(...numbered, 0);
+const missingNumbers = Array.from({ length: maxMigration }, (_, index) => index + 1)
+  .filter((number) => !numbered.includes(number));
+
+if (missing.length > 0) {
+  throw new Error(`Missing migrations: ${missing.join(", ")}`);
+}
+if (missingNumbers.length > 0) {
+  throw new Error(`Migration sequence is not contiguous: ${numbered.join(", ")}`);
+}
+
+const migration007 = await readFile(resolve(migrationsDirectory, requiredMigrations[6]), "utf8");
+const migration008 = await readFile(resolve(migrationsDirectory, requiredMigrations[7]), "utf8");
+const migration009 = await readFile(resolve(migrationsDirectory, requiredMigrations[8]), "utf8");
+const migration010 = await readFile(resolve(migrationsDirectory, requiredMigrations[9]), "utf8");
+if (!migration007.includes("customer_language")) {
+  throw new Error("Migration 007 does not contain customer_language support.");
+}
+if (!migration008.includes("consume_company_usage") || !migration008.includes("dedupe_key")) {
+  throw new Error("Migration 008 is missing idempotency or atomic usage support.");
+}
+if (!migration009.includes("request_idempotency") || !migration009.includes("audit_events")) {
+  throw new Error("Migration 009 is missing request idempotency or audit support.");
+}
+if (!migration010.includes("consume_company_usage_idempotent") || !migration010.includes("usage_reservations")) {
+  throw new Error("Migration 010 is missing idempotent usage reservations.");
+}
+
+if (process.env.CHECK_LIVE_DB === "true") {
+  const url = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) {
+    throw new Error("CHECK_LIVE_DB=true requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
+  }
+
+  const liveChecks = [
+    ["conversations.customer_language", "conversations?select=customer_language&limit=1"],
+    ["conversation_messages.idempotency_key", "conversation_messages?select=idempotency_key&limit=1"],
+    ["boss_inbox.dedupe_key", "boss_inbox?select=dedupe_key&limit=1"],
+    ["request_idempotency", "request_idempotency?select=idempotency_key&limit=1"],
+    ["audit_events", "audit_events?select=action&limit=1"],
+    ["usage_reservations", "usage_reservations?select=idempotency_key&limit=1"],
+  ];
+  for (const [label, path] of liveChecks) {
+    const response = await fetch(`${url.replace(/\/$/, "")}/rest/v1/${path}`, {
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`Live migration check failed for ${label}: ${response.status} ${await response.text()}`);
+    }
+  }
+  console.log("Live database exposes migration 007 and 008 columns.");
+}
+
+console.log(`Verified ${requiredMigrations.length} ordered database migrations.`);

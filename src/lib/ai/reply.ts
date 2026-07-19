@@ -99,7 +99,7 @@ export async function generateAiReplyWithAI(params: {
     customerMessage,
     tripJson: JSON.stringify(tripDetails, null, 2),
     missingFields: missingFields.join(', ') || (lang === 'zh' ? '无' : 'none'),
-    contactInfo: contact ? `${contact.method} ${contact.value}` : '',
+    contactInfo: contact ? `${contact.method} [redacted]` : '',
     hasQuote: !!quote,
   });
 

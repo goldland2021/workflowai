@@ -8,11 +8,13 @@ function buildApiUrl(path: string, apiBaseUrl?: string): string {
 export async function analyzeCustomerTurnOnServer(
   input: AnalyzeCustomerTurnRequest,
   apiBaseUrl?: string,
+  idempotencyKey?: string,
 ): Promise<WorkflowResult & { conversationId?: string | null }> {
   const response = await fetch(buildApiUrl("/api/conversation/analyze", apiBaseUrl), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
     },
     body: JSON.stringify(input),
   });

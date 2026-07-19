@@ -15,6 +15,8 @@ import { isWidgetOriginAllowed, verifyWidgetToken } from "@/lib/auth/widget";
 import { isConfigured } from "@/lib/supabase/client";
 import {
   bookingRowToTripDetails,
+  claimRequestIdempotency,
+  completeRequestIdempotency,
   createBossInboxItem,
   createConversation,
   getBusinessConfig,
@@ -24,6 +26,7 @@ import {
   getConversationBySessionId,
   getMessages,
   logAiFailure,
+  releaseRequestIdempotency,
   saveMessage,
   updateConversationContact,
   updateConversationLanguage,
@@ -34,6 +37,7 @@ import { checkDistributedRateLimit, getClientIp } from "@/lib/ai/rate-limit";
 import { checkUsageLimit, consumeUsage } from "@/lib/saas/usage";
 import { getWidgetSettings } from "@/lib/supabase/saas";
 import { resolveConversationLang } from "@/lib/ai/prompts/templates";
+import { hashIdempotencyRequest, normalizeIdempotencyKey } from "@/lib/domain/idempotency";
 
 export const runtime = "nodejs";
 
@@ -129,6 +133,10 @@ export async function POST(request: Request) {
   }
 
   const payload: AnalyzeCustomerTurnPayload = parsed.data;
+  const requestIdempotencyKey = normalizeIdempotencyKey(request.headers.get("idempotency-key"));
+  if (requestIdempotencyKey && (requestIdempotencyKey.length < 1 || requestIdempotencyKey.length > 200)) {
+    return Response.json({ error: "Invalid Idempotency-Key." }, { status: 400 });
+  }
 
   // An authenticated admin session always identifies its own company; a
   // widget visitor has no session and must supply the company they belong to
@@ -161,6 +169,43 @@ export async function POST(request: Request) {
   // ─── 1. Database persistence ───
   const hasDb = isConfigured() && !isSimulation;
   const canUseCache = !isSimulation;
+  const requestHash = requestIdempotencyKey ? hashIdempotencyRequest(payload) : undefined;
+  let idempotencyClaimed = false;
+
+  const releaseIdempotency = async () => {
+    if (!hasDb || !requestIdempotencyKey || !requestHash || !idempotencyClaimed) return;
+    await releaseRequestIdempotency(companyId, requestIdempotencyKey, requestHash).catch(() => {
+      console.warn("Failed to release request idempotency record");
+    });
+    idempotencyClaimed = false;
+  };
+
+  const completeIdempotency = async (responseBody: unknown) => {
+    if (!hasDb || !requestIdempotencyKey || !requestHash || !idempotencyClaimed) return;
+    await completeRequestIdempotency(companyId, requestIdempotencyKey, requestHash, responseBody).catch(() => {
+      console.warn("Failed to complete request idempotency record");
+    });
+    idempotencyClaimed = false;
+  };
+
+  if (hasDb && requestIdempotencyKey && requestHash) {
+    try {
+      const claim = await claimRequestIdempotency(companyId, requestIdempotencyKey, requestHash);
+      if (claim.state === "replay") return Response.json(claim.responseBody);
+      if (claim.state === "in_progress") {
+        return Response.json(
+          { error: "This request is already being processed.", code: "idempotency_in_progress" },
+          { status: 409, headers: { "Retry-After": "5" } },
+        );
+      }
+      if (claim.state === "conflict") {
+        return Response.json({ error: "Idempotency-Key was used for a different request." }, { status: 422 });
+      }
+      idempotencyClaimed = true;
+    } catch {
+      return Response.json({ error: "Request idempotency is unavailable." }, { status: 503 });
+    }
+  }
 
   let conversationId: string | undefined = payload.conversationId;
   let createdNewConversation = false;
@@ -177,8 +222,8 @@ export async function POST(request: Request) {
 
   let configToUse = airportTransferConfiguration;
   try {
-    const [gate, persistedConfig, conversation] = await Promise.all([
-      hasDb ? checkUsageLimit(companyId, "ai_messages") : Promise.resolve(null),
+    const [gate, persistedConfig, conversation, existingSessionConversation] = await Promise.all([
+      hasDb ? checkUsageLimit(companyId, "ai_messages", 1, requestIdempotencyKey) : Promise.resolve(null),
       isAdmin && payload.businessConfiguration
         ? Promise.resolve(payload.businessConfiguration)
         : isConfigured()
@@ -187,11 +232,19 @@ export async function POST(request: Request) {
       hasDb && conversationId
         ? getConversationById(conversationId, companyId)
         : Promise.resolve(undefined),
+      hasDb && !conversationId && payload.sessionId
+        ? getConversationBySessionId(payload.sessionId, companyId)
+        : Promise.resolve(null),
     ]);
 
     configToUse = persistedConfig ?? airportTransferConfiguration;
-    persistedCustomerLanguage = conversation?.customer_language ?? undefined;
+    if (!conversationId && existingSessionConversation) {
+      conversationId = existingSessionConversation.id;
+    }
+    persistedCustomerLanguage =
+      (conversation ?? existingSessionConversation)?.customer_language ?? undefined;
     if (gate && !gate.allowed) {
+      await releaseIdempotency();
       return Response.json(
         {
           error: gate.reason === "trial_expired" ? "Trial expired." : "Usage limit reached.",
@@ -202,10 +255,12 @@ export async function POST(request: Request) {
         { status: 402 },
       );
     }
-    if (hasDb && conversationId && !conversation) {
+    if (hasDb && payload.conversationId && !conversation) {
+      await releaseIdempotency();
       return Response.json({ error: "Conversation not found." }, { status: 404 });
     }
   } catch {
+    await releaseIdempotency();
     return Response.json({ error: "Required conversation services are unavailable." }, { status: 503 });
   }
 
@@ -254,21 +309,34 @@ export async function POST(request: Request) {
       // Auto-create conversation if needed
       if (!conversationId) {
         const sessionId = payload.sessionId || `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        conversationId = await createConversation(sessionId, companyId, customerLanguage);
-        createdNewConversation = true;
+        const result = await createConversation(sessionId, companyId, customerLanguage);
+        conversationId = result.conversation.id;
+        createdNewConversation = result.created;
+        persistedCustomerLanguage = result.conversation.customer_language ?? undefined;
       }
 
       const persistenceTasks: Promise<unknown>[] = [
-        saveMessage(conversationId, customerMessage),
-        consumeUsage(companyId, "ai_messages"),
+        saveMessage(
+          conversationId,
+          customerMessage,
+          requestIdempotencyKey ? `${requestIdempotencyKey}:customer` : undefined,
+        ),
       ];
       if (createdNewConversation) {
-        persistenceTasks.push(consumeUsage(companyId, "conversations"));
+        persistenceTasks.push(
+          consumeUsage(
+            companyId,
+            "conversations",
+            1,
+            requestIdempotencyKey ? `${requestIdempotencyKey}:conversations` : undefined,
+          ),
+        );
       } else if (!persistedCustomerLanguage) {
         persistenceTasks.push(updateConversationLanguage(conversationId, companyId, customerLanguage));
       }
       await Promise.all(persistenceTasks);
     } catch {
+      await releaseIdempotency();
       return Response.json({ error: "Unable to persist this message." }, { status: 503 });
     }
   }
@@ -287,13 +355,17 @@ export async function POST(request: Request) {
 
       if (hasDb && conversationId) {
         try {
-          await saveMessage(conversationId, aiMessage);
+          await saveMessage(
+            conversationId,
+            aiMessage,
+            requestIdempotencyKey ? `${requestIdempotencyKey}:ai` : undefined,
+          );
         } catch {
           console.warn("Failed to save cached AI reply to DB");
         }
       }
 
-      return Response.json({
+      const responseBody = {
         aiMessage,
         tripDetails: currentTripDetails,
         contact: null,
@@ -301,7 +373,9 @@ export async function POST(request: Request) {
         bossInboxItems: [],
         conversationId,
         isNewConversation: createdNewConversation,
-      });
+      };
+      await completeIdempotency(responseBody);
+      return Response.json(responseBody);
     }
   }
 
@@ -326,6 +400,7 @@ export async function POST(request: Request) {
         provider: "workflow-ai",
       }).catch(() => undefined);
     }
+    await releaseIdempotency();
     return Response.json({ error: "AI 暂时不可用，请稍后重试。" }, { status: 503 });
   }
 
@@ -335,7 +410,11 @@ export async function POST(request: Request) {
   if (hasDb && conversationId) {
     const shouldUpdateBooking = result.tripDetails !== currentTripDetails;
     const [messageResult, bookingResult] = await Promise.allSettled([
-      saveMessage(conversationId, result.aiMessage),
+      saveMessage(
+        conversationId,
+        result.aiMessage,
+        requestIdempotencyKey ? `${requestIdempotencyKey}:ai` : undefined,
+      ),
       shouldUpdateBooking
         ? upsertBooking(conversationId, result.tripDetails, companyId)
         : Promise.resolve(undefined),
@@ -353,7 +432,12 @@ export async function POST(request: Request) {
     if (result.contact) {
       try {
         await updateConversationContact(conversationId, companyId, result.contact);
-        await consumeUsage(companyId, "leads");
+        await consumeUsage(
+          companyId,
+          "leads",
+          1,
+          requestIdempotencyKey ? `${requestIdempotencyKey}:leads` : undefined,
+        );
       } catch {
         console.warn("Failed to persist captured contact or usage");
       }
@@ -362,7 +446,12 @@ export async function POST(request: Request) {
     if (result.bossInboxItems.length > 0) {
       if (result.bossInboxItems.some((item) => item.type === "quote_approval")) {
         try {
-          await consumeUsage(companyId, "quote_suggestions");
+          await consumeUsage(
+            companyId,
+            "quote_suggestions",
+            1,
+            requestIdempotencyKey ? `${requestIdempotencyKey}:quote_suggestions` : undefined,
+          );
         } catch {
           console.warn("Failed to record quote usage");
         }
@@ -397,12 +486,14 @@ export async function POST(request: Request) {
     cacheReply(companyId, payload.message, result.aiMessage.text);
   }
 
-  return Response.json({
+  const responseBody = {
     ...result,
     bossInboxItems,
     conversationId,
     isNewConversation: createdNewConversation,
-  });
+  };
+  await completeIdempotency(responseBody);
+  return Response.json(responseBody);
 }
 
 // ─── GET: Load conversation history by sessionId ───
