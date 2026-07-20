@@ -18,7 +18,7 @@ import {
   detectEventsWithAI,
   extractContactWithAI,
 } from "../ai/extract";
-import { generateAiReplyWithAI } from "../ai/reply";
+import { formatCustomerQuoteNotice, generateAiReplyWithAI } from "../ai/reply";
 import { hasRealAI } from "../ai";
 import { redactContactDetails } from "../ai/pii";
 import { resolveConversationLang, type PromptLang } from "../ai/prompts/templates";
@@ -610,14 +610,18 @@ function createAiMessage(params: {
       : "";
   let text: string;
 
-  if (params.contact) {
+  if (params.contact && params.quote) {
+    text = params.lang === "zh"
+      ? `谢谢，已记录您的${params.contact.method}联系方式。${formatCustomerQuoteNotice(params.lang, params.quote)}${eventText}`
+      : `Thanks, I have saved your ${params.contact.method}. ${formatCustomerQuoteNotice(params.lang, params.quote)}${eventText}`;
+  } else if (params.contact) {
     text = params.lang === "zh"
       ? `谢谢，已记录您的${params.contact.method}联系方式。`
       : `Thanks, I have saved your ${params.contact.method}.`;
   } else if (params.quote) {
     text = params.lang === "zh"
-      ? `行程信息已经足够，我会为老板准备报价建议。${eventText}`
-      : `I have enough trip details to prepare a quote suggestion for the owner.${eventText}`;
+      ? `${formatCustomerQuoteNotice(params.lang, params.quote)}${eventText}`
+      : formatCustomerQuoteNotice(params.lang, params.quote) + eventText;
   } else if (params.missingFields.length > 0) {
     const nextField = params.missingFields[0];
     const contactAsk = purchaseIntent

@@ -88,6 +88,8 @@ describe("analyzeCustomerTurn - quote suggestion rules", () => {
     expect(quoteItem).toBeDefined();
     expect(quoteItem?.status).toBe("pending");
     expect(quoteItem?.quote?.suggestedPrice).toBeGreaterThan(0);
+    expect(result.aiMessage.text.replace(/,/g, "")).toContain(String(quoteItem?.quote?.suggestedPrice));
+    expect(result.aiMessage.text).toMatch(/初步报价|老板确认|preliminary|owner confirmation/iu);
   });
 
   it("does not duplicate a quote approval item when one is already pending", async () => {
