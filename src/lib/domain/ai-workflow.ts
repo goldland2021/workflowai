@@ -218,6 +218,21 @@ export async function analyzeCustomerTurn(params: {
       bossInboxItems: [],
     };
   }
+  const fastOperationalReply = getFastOperationalReply(params.message, lang);
+  if (fastOperationalReply) {
+    return {
+      aiMessage: {
+        id: `msg_ai_${Date.now()}`,
+        role: "ai",
+        text: fastOperationalReply,
+        createdAt: now.toISOString(),
+        channel: "website_widget",
+      },
+      tripDetails: params.currentTripDetails,
+      detectedEvents: [],
+      bossInboxItems: [],
+    };
+  }
 
   let tripDetails: TripDetails;
   let contact: CapturedContact | undefined;
@@ -367,6 +382,51 @@ export function getFastFaqReply(
     return "高速费、停车费和税费会在老板确认的报价中明确列出，最终以老板批准的报价为准。";
   }
 
+  return undefined;
+}
+
+/**
+ * Keep low-information operational turns out of the full sales workflow.
+ * These replies must be strict matches so a quote, address, or booking change
+ * can never be swallowed by the conversational shortcut.
+ */
+export function getFastOperationalReply(message: string, lang: PromptLang): string | undefined {
+  const compact = message.trim().replace(/\s+/gu, " ");
+  if (!compact) return undefined;
+
+  if (lang === "zh") {
+    if (/^(?:谢谢|謝謝|多谢|多謝|感谢|感謝)(?:你|您)?[！!。.]?$/u.test(compact)) return "不客气。";
+    if (/^(?:收到|好的|好|了解|明白|已知悉|没问题|沒問題|ok|okay)[！!。.]?$/iu.test(compact)) return "收到。";
+    if (/^(?:稍后|稍後).{0,8}(?:确认|確認|告诉你|告訴你|通知你)[！!。.]?$/u.test(compact)) {
+      return "好的，请确认后告诉我。";
+    }
+    if (/(?:航班前|起飞前|起飛前).{0,20}(?:联系|聯絡).{0,8}司机|联系.{0,8}司机/u.test(compact)) {
+      return "收到，祝您旅途顺利！";
+    }
+    if (/^(?:你好|您好|嗨)[！!。.]?$/u.test(compact)) return "您好，请问有什么可以帮您？";
+    return undefined;
+  }
+
+  if (lang === "ar") {
+    if (/^(?:شكرا|شكرًا|ممتاز|حسنًا|حسنا|تم|موافق)[!.؟]?$/iu.test(compact)) return "على الرحب والسعة.";
+    if (/^(?:سأؤكد|سوف أؤكد|سأخبرك).{0,24}(?:لاحقًا|لاحقا|بعد قليل)/iu.test(compact)) {
+      return "حسنًا، أبلغني عند تأكيد الوقت.";
+    }
+    if (/^(?:مرحبا|مرحبًا|أهلا|أهلًا)[!.؟]?$/iu.test(compact)) return "مرحبًا، كيف يمكنني مساعدتك؟";
+    return undefined;
+  }
+
+  if (/^hello!?$|^hi!?$|^hey!?$/iu.test(compact)) return "Hello! How can I help?";
+  if (/\b(?:before|prior to) the flight\b.{0,60}\b(?:contact|get in touch with)\b.{0,20}\bdriver\b|\b(?:i['’]?ll|i will)\s+(?:contact|get in touch with)\s+(?:the\s+)?driver\b/iu.test(compact)) {
+    return "Noted. Safe travels!";
+  }
+  if (/(?:\btime\b.{0,24}\b(?:confirm|let you know|tell you)\b|\b(?:confirm|let you know|tell you)\b.{0,24}\b(?:pickup\s+)?time\b).{0,14}\blater\b/iu.test(compact)) {
+    return "Noted. Please confirm the pickup time when ready.";
+  }
+  if (/^(?:thanks?|thank you|thx)(?:\s+(?:so much|a lot))?[.! ,😊🙏]*$/iu.test(compact)) return "You're welcome!";
+  if (/^(?:well\s+)?noted\s*,?\s*(?:thanks?|thank you|thx)[.! ,😊🙏]*$/iu.test(compact)) return "You're welcome!";
+  if (/^(?:noted|well noted|okay|ok|got it|received|no problem)[.! ,😊🙏]*$/iu.test(compact)) return "Noted.";
+  if (/^(?:[😊🙏👍👌❤❤️]\uFE0F?\s*)+$/u.test(compact)) return "Noted.";
   return undefined;
 }
 

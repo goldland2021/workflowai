@@ -12,7 +12,12 @@ vi.mock("../ai/client", () => ({
   }),
 }));
 
-import { analyzeCustomerTurn, filterDetectedEventsForMessage, getFastFaqReply } from "./ai-workflow";
+import {
+  analyzeCustomerTurn,
+  filterDetectedEventsForMessage,
+  getFastFaqReply,
+  getFastOperationalReply,
+} from "./ai-workflow";
 import { airportTransferConfiguration } from "./airport-transfer";
 import type { DetectedEvent, TripDetails } from "./types";
 import { replyLanguageMatches } from "../ai/reply";
@@ -125,6 +130,55 @@ describe("analyzeCustomerTurn - quote suggestion rules", () => {
     expect(result.aiMessage.text).toMatch(/老板已确认|owner has confirmed/iu);
     expect(result.aiMessage.text).toContain("USD 78");
     expect(result.bossInboxItems.some((item) => item.type === "quote_approval")).toBe(false);
+  });
+});
+
+describe("getFastOperationalReply", () => {
+  it("keeps acknowledgements to one short sentence", () => {
+    expect(getFastOperationalReply("Well noted, thanks", "en")).toBe("You're welcome!");
+    expect(getFastOperationalReply("😊", "en")).toBe("Noted.");
+  });
+
+  it("does not repeat the booking when the customer will contact the driver", () => {
+    expect(
+      getFastOperationalReply("Before the flight, I will contact the driver, thx", "en"),
+    ).toBe("Noted. Safe travels!");
+  });
+
+  it("acknowledges a later pickup-time confirmation without asking for the address again", () => {
+    expect(getFastOperationalReply("The time confirm you later", "en")).toBe(
+      "Noted. Please confirm the pickup time when ready.",
+    );
+  });
+
+  it("does not intercept a quote request", () => {
+    expect(getFastOperationalReply("How much is the transfer?", "en")).toBeUndefined();
+  });
+});
+
+describe("analyzeCustomerTurn - concise operational turns", () => {
+  it("does not create a quote or inbox item for a simple acknowledgement", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "Well noted, thanks",
+      currentTripDetails: completeTripDetails,
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.aiMessage.text).toBe("You're welcome!");
+    expect(result.bossInboxItems).toEqual([]);
+    expect(result.detectedEvents).toEqual([]);
+  });
+
+  it("answers a greeting without repeating the current booking", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "hello",
+      currentTripDetails: completeTripDetails,
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.aiMessage.text).toBe("Hello! How can I help?");
   });
 });
 

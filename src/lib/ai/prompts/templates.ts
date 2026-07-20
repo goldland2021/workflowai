@@ -124,6 +124,12 @@ AI行为边界（必须严格遵守）：
 ${params.aiBoundaries.map((b) => `- ${b}`).join("\n") || "（无）"}
 
 回复要求：
+- 默认只回复1句短句，最多2句、约35字；只有客户明确要求时才发送结构化报价或司机信息
+- 客户只说“收到、谢谢、好的”、发送表情，或说稍后确认时，只做简短确认；不要重复报价、路线、订单、司机或联系方式
+- 不要重复最近对话中已经确认的信息，除非客户再次询问或信息发生变化
+- 报价回复只保留金额、币种、支付方式/费用说明，以及一个必要的下一步问题；不要主动补充距离和行程时长
+- 司机信息和订单确认使用紧凑的独立区块，仅在首次发送或客户明确要求时发送
+- 同一段对话中不要反复使用“谢谢”和“期待为您服务”等客套话
 - 一次只问**一个**最重要的问题，优先补齐报价所需信息
 - 根据乘客人数和行李数主动推荐合适车型
 - 回答客户问题时优先参考FAQ
@@ -153,6 +159,12 @@ ${params.faq || "لا توجد"}
 ${params.aiBoundaries.map((b) => `- ${b}`).join("\n") || "لا توجد"}
 
 القواعد:
+- اجعل الرد جملة قصيرة واحدة افتراضيًا، وبحد أقصى جملتين أو نحو 35 كلمة، إلا عند طلب معلومات منظمة
+- إذا كانت الرسالة مجرد تأكيد أو شكر أو رمز تعبيري أو تأجيل للتأكيد، فاكتفِ برد قصير ولا تكرر السعر أو المسار أو الحجز أو بيانات السائق أو وسيلة التواصل
+- لا تكرر المعلومات المؤكدة في سجل المحادثة إلا إذا سأل العميل عنها أو تغيرت
+- عند ذكر السعر، اذكر المبلغ والعملة وطريقة الدفع أو الرسوم المشمولة وسؤال المتابعة الضروري فقط؛ لا تضف المسافة أو مدة الرحلة من تلقاء نفسك
+- أرسل بيانات السائق وتفاصيل الحجز في كتلة مختصرة مستقلة عند إرسالها لأول مرة أو عند طلبها صراحة
+- لا تكرر عبارات الشكر أو عبارات الختام في المحادثة نفسها
 - اطرح سؤالًا واحدًا فقط في كل مرة، وأكمل أهم المعلومات الناقصة أولًا
 - أوصِ بسيارة مناسبة حسب عدد الركاب والأمتعة
 - استخدم الأسئلة الشائعة عند الإجابة
@@ -181,6 +193,12 @@ AI boundaries (strict):
 ${params.aiBoundaries.map((b) => `- ${b}`).join("\n") || "(none)"}
 
 Rules:
+- Use one short sentence by default, maximum two short sentences or about 35 words unless structured details are explicitly requested
+- If the latest message is only an acknowledgement, thanks, emoji, or says the customer will confirm later, reply briefly and do not repeat the quote, route, booking, driver details, or contact request
+- Do not repeat information already confirmed in the conversation unless the customer asks again or it changed
+- For a quote, include only the amount, currency, payment method or included fees, and one necessary next question; do not add distance or journey time unless asked
+- Send driver details and booking details as one compact separate block only when sending them for the first time or when explicitly requested
+- Avoid repeating "Thank you" or closing phrases in the same conversation
 - Ask ONE question at a time, prioritize missing quote fields
 - Recommend suitable vehicle based on passenger/luggage count
 - Reference FAQ when answering questions
@@ -204,7 +222,7 @@ ${params.tripJson}
 ${params.contactInfo ? `已捕获联系方式：${params.contactInfo}` : ""}
 ${params.quoteSummary ? `${quoteSummaryInstruction}${params.quoteSummary}` : ""}
 
-请用自然、专业、简洁的中文回复客户（1-4句话）。直接输出回复文字，不要加解释。`
+请用自然、专业、简洁的中文回复客户（默认1句，最多2句、约35字；需要结构化信息时除外）。直接输出回复文字，不要加解释。`
 
     : isAr
       ? `سجل المحادثة الأخير:
@@ -220,7 +238,7 @@ ${params.tripJson}
 ${params.contactInfo ? `تم تسجيل وسيلة التواصل: ${params.contactInfo}` : ""}
 ${params.quoteSummary ? `${quoteSummaryInstruction} ${params.quoteSummary}` : ""}
 
-أجب بالعربية الطبيعية والمهنية والمختصرة في 1-4 جمل. أخرج نص الرد فقط دون شرح إضافي.`
+أجب بالعربية الطبيعية والمهنية والمختصرة، بجملة قصيرة واحدة افتراضيًا وبحد أقصى جملتين أو نحو 35 كلمة، إلا عند الحاجة إلى معلومات منظمة. أخرج نص الرد فقط دون شرح إضافي.`
     : `Recent conversation:
 ${params.recentHistory || "(none)"}
 
@@ -234,9 +252,9 @@ Missing fields: ${params.missingFields || "none"}
 ${params.contactInfo ? `Contact captured: ${params.contactInfo}` : ""}
 ${params.quoteSummary ? `${quoteSummaryInstruction} ${params.quoteSummary}` : ""}
 
-Reply in natural, professional English (1-4 sentences). Output only the reply text, no explanation.`;
+Reply in natural, professional English (one short sentence by default, maximum two short sentences or about 35 words unless structured details are explicitly requested). Output only the reply text, no explanation.`;
 
-  return { system, prompt, temperature: 0.7 };
+  return { system, prompt, temperature: 0.4 };
 }
 
 // ─── 行程提取模板 ───
