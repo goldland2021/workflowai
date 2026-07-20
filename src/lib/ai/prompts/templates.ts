@@ -79,9 +79,32 @@ export function buildReplyPrompt(params: {
   missingFields: string;
   contactInfo: string;
   quoteSummary: string;
+  quoteApproved?: boolean;
 }): { system: string; prompt: string; temperature: number } {
   const isZh = params.lang === "zh";
   const isAr = params.lang === "ar";
+  const quoteRule = params.quoteApproved
+    ? isZh
+      ? "- 系统提供的是老板已批准的最终报价，必须明确告诉客户价格已经确认，不要说仍需老板确认、等待老板或只是初步报价"
+      : isAr
+        ? "- إذا كان السعر مقدمًا على أنه معتمد من المالك، أخبر العميل بوضوح أن السعر النهائي مؤكد، ولا تقل إنه لا يزال بانتظار تأكيد المالك"
+        : "- When the system provides an owner-approved quote, clearly tell the customer that the final price is confirmed; do not say it is still awaiting owner confirmation or only provisional"
+    : isZh
+      ? "- 不要自行编造价格。若系统提供参考报价，必须向客户明确说明币种、金额和建议车型，并标注为初步/参考报价；最终价格和车辆可用性仍需老板确认"
+      : isAr
+        ? "- لا تخترع الأسعار. إذا تم تزويدك بتقدير من النظام، اذكر العملة والمبلغ والسيارة المقترحة بوضوح، ووضّح أنه تقدير أولي يحتاج إلى تأكيد المالك"
+        : "- Never invent a price. When the system provides a provisional estimate, clearly disclose the currency, amount, and recommended vehicle, and label it as preliminary; the owner must still confirm the final price and vehicle availability";
+  const quoteSummaryInstruction = params.quoteApproved
+    ? isZh
+      ? "老板已批准的最终报价（必须告诉客户价格已确认）："
+      : isAr
+        ? "السعر النهائي المعتمد من المالك (يجب إخبار العميل بأنه مؤكد):"
+        : "Owner-approved final quote (tell the customer that the price is confirmed):"
+    : isZh
+      ? "系统提供的参考报价（必须告知客户，并说明最终仍需老板确认）："
+      : isAr
+        ? "تقدير النظام المبدئي (يجب ذكره للعميل مع توضيح أن التأكيد النهائي للمالك):"
+        : "System-provided provisional quote (include it in the customer reply and explain that the owner must confirm it):";
 
   const system = isZh
     ? `你是"${params.companyName}"的专业AI客服员工，负责机场接送服务。
@@ -105,7 +128,7 @@ ${params.aiBoundaries.map((b) => `- ${b}`).join("\n") || "（无）"}
 - 根据乘客人数和行李数主动推荐合适车型
 - 回答客户问题时优先参考FAQ
 - 客户有购买意向时，礼貌引导提供联系方式
- - 不要自行编造价格。若系统提供参考报价，必须向客户明确说明币种、金额和建议车型，并标注为初步/参考报价；最终价格和车辆可用性仍需老板确认
+ ${quoteRule}
 - 不要声称邮件、报价或消息已经发送或会自动发送；应说明老板批准后会使用已记录的联系方式跟进
 - 语气保持专业高效，像经验丰富的接送客服
  - 如果系统提供了参考报价，必须在回复中告知客户，不要只说“会准备报价”`
@@ -134,7 +157,7 @@ ${params.aiBoundaries.map((b) => `- ${b}`).join("\n") || "لا توجد"}
 - أوصِ بسيارة مناسبة حسب عدد الركاب والأمتعة
 - استخدم الأسئلة الشائعة عند الإجابة
 - اطلب وسيلة تواصل بلطف عند وجود نية حجز
- - لا تخترع الأسعار. إذا تم تزويدك بتقدير من النظام، اذكر العملة والمبلغ والسيارة المقترحة بوضوح، ووضّح أنه تقدير أولي يحتاج إلى تأكيد المالك
+ ${quoteRule}
 - لا تدّع أن رسالة أو عرض سعر أُرسل تلقائيًا؛ اشرح أن المالك سيتابع بعد الموافقة
 - حافظ على أسلوب مهني ومختصر
  - إذا قدم النظام تقديرًا، يجب ذكره للعميل بوضوح، ولا تكتفِ بالقول إنك ستجهز عرضًا للسعر`
@@ -162,7 +185,7 @@ Rules:
 - Recommend suitable vehicle based on passenger/luggage count
 - Reference FAQ when answering questions
 - Gently ask for contact info when purchase intent is detected
- - Never invent a price. When the system provides a provisional estimate, clearly disclose the currency, amount, and recommended vehicle, and label it as preliminary; the owner must still confirm the final price and vehicle availability
+ ${quoteRule}
 - Never claim that an email, quote, or message has already been sent or will be sent automatically. Say the owner will follow up using the captured contact after approval
 - Stay professional, like an experienced transfer agent
  - If a quote summary is provided, include it in the reply instead of only saying that a quote will be prepared`;
@@ -179,7 +202,7 @@ ${params.tripJson}
 
 缺失的关键字段：${params.missingFields || "无"}
 ${params.contactInfo ? `已捕获联系方式：${params.contactInfo}` : ""}
-${params.quoteSummary ? `系统提供的参考报价（必须告知客户，并说明最终仍需老板确认）：${params.quoteSummary}` : ""}
+${params.quoteSummary ? `${quoteSummaryInstruction}${params.quoteSummary}` : ""}
 
 请用自然、专业、简洁的中文回复客户（1-4句话）。直接输出回复文字，不要加解释。`
 
@@ -195,7 +218,7 @@ ${params.tripJson}
 
 الحقول الناقصة: ${params.missingFields || "لا يوجد"}
 ${params.contactInfo ? `تم تسجيل وسيلة التواصل: ${params.contactInfo}` : ""}
-${params.quoteSummary ? `تقدير النظام المبدئي (يجب ذكره للعميل مع توضيح أن التأكيد النهائي للمالك): ${params.quoteSummary}` : ""}
+${params.quoteSummary ? `${quoteSummaryInstruction} ${params.quoteSummary}` : ""}
 
 أجب بالعربية الطبيعية والمهنية والمختصرة في 1-4 جمل. أخرج نص الرد فقط دون شرح إضافي.`
     : `Recent conversation:
@@ -209,7 +232,7 @@ ${params.tripJson}
 
 Missing fields: ${params.missingFields || "none"}
 ${params.contactInfo ? `Contact captured: ${params.contactInfo}` : ""}
-${params.quoteSummary ? `System-provided provisional quote (include it in the customer reply and explain that the owner must confirm it): ${params.quoteSummary}` : ""}
+${params.quoteSummary ? `${quoteSummaryInstruction} ${params.quoteSummary}` : ""}
 
 Reply in natural, professional English (1-4 sentences). Output only the reply text, no explanation.`;
 

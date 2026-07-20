@@ -9,11 +9,12 @@ import {
   ChannelSchema,
   MessageRoleSchema,
 } from "@/lib/domain/schemas";
-import type { ConversationMessage } from "@/lib/domain/types";
+import type { ConversationMessage, QuoteSuggestion } from "@/lib/domain/types";
 import { getCurrentCompanyId } from "@/lib/auth/admin";
 import { isWidgetOriginAllowed, verifyWidgetToken } from "@/lib/auth/widget";
 import { isConfigured } from "@/lib/supabase/client";
 import {
+  bookingRowToQuote,
   bookingRowToTripDetails,
   claimRequestIdempotency,
   completeRequestIdempotency,
@@ -210,6 +211,7 @@ export async function POST(request: Request) {
   let conversationId: string | undefined = payload.conversationId;
   let createdNewConversation = false;
   let currentTripDetails = payload.currentTripDetails;
+  let approvedQuote: QuoteSuggestion | undefined;
   let existingBossItems = payload.existingBossItems;
   let persistedCustomerLanguage: "zh" | "en" | "ar" | undefined;
   const customerMessage: ConversationMessage = {
@@ -271,7 +273,12 @@ export async function POST(request: Request) {
     ]);
 
     if (bookingResult.status === "fulfilled") {
-      if (bookingResult.value) currentTripDetails = bookingRowToTripDetails(bookingResult.value);
+      if (bookingResult.value) {
+        currentTripDetails = bookingRowToTripDetails(bookingResult.value);
+        if (bookingResult.value.status === "ready") {
+          approvedQuote = bookingRowToQuote(bookingResult.value);
+        }
+      }
     } else {
       console.warn("Failed to load stored trip details");
     }
@@ -387,6 +394,7 @@ export async function POST(request: Request) {
       currentTripDetails,
       configuration: configToUse,
       existingBossItems,
+      approvedQuote,
       recentMessages: recentMessagesForAI,
       customerLanguage,
     });

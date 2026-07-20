@@ -700,20 +700,36 @@ function bookingToReceiptRequest(booking: BookingRow): ReceiptRequest {
   };
 }
 
+export function bookingRowToQuote(row: BookingRow): QuoteSuggestion | undefined {
+  if (row.approved_price == null) return undefined;
+
+  return {
+    id: `quote_${row.id}`,
+    serviceType: row.service_type as TripDetails["serviceType"] ?? undefined,
+    suggestedPrice: row.approved_price,
+    currency: row.currency ?? "USD",
+    vehicleType: row.vehicle_preference ?? undefined,
+    includedFees: row.included_fees ?? ["Tolls", "Parking fees", "Taxes"],
+    reason: "Owner-approved quote",
+    confidence: 100,
+    missingFields: [],
+  };
+}
+
 function rowToQuote(row: BossInboxRow | BookingRow): QuoteSuggestion | undefined {
-  const isInbox = "suggested_price" in row;
-  const price = isInbox ? row.suggested_price : row.approved_price;
+  if (!("suggested_price" in row)) return bookingRowToQuote(row);
+  const price = row.suggested_price;
   if (price == null) return undefined;
 
   return {
     id: `quote_${row.id}`,
-    serviceType: "service_type" in row ? (row.service_type as TripDetails["serviceType"] ?? undefined) : undefined,
+    serviceType: undefined,
     suggestedPrice: price,
     currency: row.currency ?? "USD",
-    vehicleType: isInbox ? row.vehicle_type ?? undefined : row.vehicle_preference ?? undefined,
-    includedFees: "included_fees" in row ? row.included_fees ?? undefined : ["Tolls", "Parking fees", "Taxes"],
-    reason: isInbox ? row.reason ?? "" : "Owner-approved quote",
-    confidence: isInbox ? row.confidence ?? 75 : 100,
+    vehicleType: row.vehicle_type ?? undefined,
+    includedFees: ["Tolls", "Parking fees", "Taxes"],
+    reason: row.reason ?? "",
+    confidence: row.confidence ?? 75,
     missingFields: [],
   };
 }

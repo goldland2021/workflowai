@@ -192,6 +192,7 @@ export async function analyzeCustomerTurn(params: {
   currentTripDetails: TripDetails;
   configuration: BusinessConfiguration;
   existingBossItems: ExistingBossInboxItem[];
+  approvedQuote?: QuoteSuggestion;
   recentMessages?: ConversationMessage[];
   customerLanguage?: PromptLang;
 }): Promise<WorkflowResult> {
@@ -261,11 +262,17 @@ export async function analyzeCustomerTurn(params: {
 
   // Pricing is owned by configured business rules, never invented by the
   // model. This also removes an entire sequential LLM round trip.
-  const quote = maybeCreateQuoteSuggestion(tripDetails, params.configuration, missingFields);
+  const quoteUsesApprovedPrice = Boolean(
+    params.approvedQuote && !hasQuoteRelevantTripChanges(params.currentTripDetails, tripDetails),
+  );
+  const quote = quoteUsesApprovedPrice
+    ? params.approvedQuote
+    : maybeCreateQuoteSuggestion(tripDetails, params.configuration, missingFields);
 
   const bossInboxItems = createBossInboxItems({
     detectedEvents,
     quote,
+    quoteApproved: quoteUsesApprovedPrice,
     tripDetails,
     existingBossItems: params.existingBossItems,
     ownerApprovalEventTypes: new Set(
@@ -285,6 +292,7 @@ export async function analyzeCustomerTurn(params: {
       detectedEvents,
       missingFields,
       quote,
+      quoteApproved: quoteUsesApprovedPrice,
       configuration: params.configuration,
       recentMessages: params.recentMessages?.map((message) => ({
         ...message,
@@ -307,6 +315,7 @@ export async function analyzeCustomerTurn(params: {
       detectedEvents,
       missingFields,
       quote,
+      quoteApproved: quoteUsesApprovedPrice,
       lang,
       createdAt: now.toISOString(),
     });
@@ -571,23 +580,46 @@ function maybeCreateQuoteSuggestion(
   };
 }
 
+function hasQuoteRelevantTripChanges(current: TripDetails, next: TripDetails): boolean {
+  const fields: Array<keyof TripDetails> = [
+    "serviceType",
+    "pickupLocation",
+    "dropoffLocation",
+    "airport",
+    "terminal",
+    "date",
+    "time",
+    "flightNumber",
+    "passengerCount",
+    "luggageCount",
+    "vehiclePreference",
+  ];
+
+  return fields.some((field) => current[field] !== next[field]);
+}
+
 function createBossInboxItems(params: {
   detectedEvents: DetectedEvent[];
   quote?: QuoteSuggestion;
+  quoteApproved: boolean;
   tripDetails: TripDetails;
   existingBossItems: ExistingBossInboxItem[];
   ownerApprovalEventTypes: Set<EventType>;
   createdAt: string;
 }): BossInboxItem[] {
-  const existingPendingTypes = new Set(
+  const existingActiveTypes = new Set(
     params.existingBossItems
-      .filter((item) => item.status === "pending")
+      .filter((item) => ["pending", "approved", "edited"].includes(item.status))
       .map((item) => item.event?.eventType ?? item.type),
+  );
+
+  const existingQuoteNeedsReview = params.existingBossItems.some(
+    (item) => item.type === "quote_approval" && ["pending", "edited"].includes(item.status),
   );
 
   const eventItems = params.detectedEvents
     .filter((event) => params.ownerApprovalEventTypes.has(event.eventType))
-    .filter((event) => !existingPendingTypes.has(event.eventType))
+    .filter((event) => !existingActiveTypes.has(event.eventType))
     .map((event): BossInboxItem => ({
       id: `boss_${event.id}`,
       type: mapEventToBossType(event.eventType),
@@ -603,7 +635,7 @@ function createBossInboxItems(params: {
     }));
 
   const quoteItem =
-    params.quote && !existingPendingTypes.has("quote_approval")
+    params.quote && !params.quoteApproved && !existingQuoteNeedsReview
       ? [
           {
             id: `boss_${params.quote.id}`,
@@ -631,6 +663,7 @@ function createAiMessage(params: {
   detectedEvents: DetectedEvent[];
   missingFields: TripFieldKey[];
   quote?: QuoteSuggestion;
+  quoteApproved: boolean;
   lang: PromptLang;
   createdAt: string;
 }): ConversationMessage {
@@ -645,16 +678,16 @@ function createAiMessage(params: {
 
   if (params.contact && params.quote) {
     text = params.lang === "zh"
-      ? `谢谢，已记录您的${params.contact.method}联系方式。${formatCustomerQuoteNotice(params.lang, params.quote)}${eventText}`
-      : `Thanks, I have saved your ${params.contact.method}. ${formatCustomerQuoteNotice(params.lang, params.quote)}${eventText}`;
+      ? `谢谢，已记录您的${params.contact.method}联系方式。${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved })}${eventText}`
+      : `Thanks, I have saved your ${params.contact.method}. ${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved })}${eventText}`;
   } else if (params.contact) {
     text = params.lang === "zh"
       ? `谢谢，已记录您的${params.contact.method}联系方式。`
       : `Thanks, I have saved your ${params.contact.method}.`;
   } else if (params.quote) {
     text = params.lang === "zh"
-      ? `${formatCustomerQuoteNotice(params.lang, params.quote)}${eventText}`
-      : formatCustomerQuoteNotice(params.lang, params.quote) + eventText;
+      ? `${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved })}${eventText}`
+      : formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved }) + eventText;
   } else if (params.missingFields.length > 0) {
     const nextField = params.missingFields[0];
     const contactAsk = purchaseIntent

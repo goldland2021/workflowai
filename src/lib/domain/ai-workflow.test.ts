@@ -102,6 +102,30 @@ describe("analyzeCustomerTurn - quote suggestion rules", () => {
 
     expect(result.bossInboxItems.some((item) => item.type === "quote_approval")).toBe(false);
   });
+
+  it("uses an owner-approved quote on later customer turns without reopening approval", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "Can you confirm the quote?",
+      currentTripDetails: completeTripDetails,
+      approvedQuote: {
+        id: "quote-approved",
+        serviceType: "airport_pickup",
+        suggestedPrice: 78,
+        currency: "USD",
+        vehicleType: "Toyota Alphard",
+        includedFees: ["Tolls", "Parking fees", "Taxes"],
+        reason: "Owner-approved quote",
+        confidence: 100,
+        missingFields: [],
+      },
+      existingBossItems: [{ status: "approved", type: "quote_approval" }],
+      configuration: airportTransferConfiguration,
+    });
+
+    expect(result.aiMessage.text).toMatch(/老板已确认|owner has confirmed/iu);
+    expect(result.aiMessage.text).toContain("USD 78");
+    expect(result.bossInboxItems.some((item) => item.type === "quote_approval")).toBe(false);
+  });
 });
 
 describe("analyzeCustomerTurn - event detection escalates, never decides", () => {
