@@ -231,14 +231,24 @@ export async function analyzeCustomerTurn(params: {
       deterministicContact ? Promise.resolve(undefined) : extractContactWithAI(params.message),
       detectEventsWithAI(promptMessage, params.configuration),
     ]);
-    // Keep critical booking fields deterministic even when structured model
-    // extraction is temporarily unavailable or returns an incomplete delta.
-    tripDetails = mergeTripDetails(aiTripDetails, params.message, params.currentTripDetails);
+    // Keep critical booking fields deterministic while preserving the model's
+    // extracted fields on top of the already persisted trip details.
+    tripDetails = mergeTripDetails(
+      params.currentTripDetails,
+      params.message,
+      aiTripDetails,
+      { locationPrompted: hasRecentLocationPrompt(params.recentMessages) },
+    );
     contact = deterministicContact ?? aiContact;
     detectedEvents = aiDetectedEvents;
   } else {
     // Fallback to original rule-based logic
-    tripDetails = mergeTripDetails(params.currentTripDetails, params.message);
+    tripDetails = mergeTripDetails(
+      params.currentTripDetails,
+      params.message,
+      undefined,
+      { locationPrompted: hasRecentLocationPrompt(params.recentMessages) },
+    );
     contact = extractContact(params.message);
     detectedEvents = detectEvents(params.message);
   }
@@ -354,15 +364,27 @@ export function getFastFaqReply(
 function mergeTripDetails(
   current: TripDetails,
   message: string,
-  trustedCurrent: TripDetails = current,
+  extractedDetails?: TripDetails,
+  options: { locationPrompted?: boolean } = {},
 ): TripDetails {
   const lower = message.toLowerCase();
-  const next: TripDetails = { ...current };
+  const extractedFields = Object.fromEntries(
+    Object.entries(extractedDetails ?? {}).filter(
+      ([key, value]) => key !== "specialRequests" && value !== undefined && value !== null && value !== "",
+    ),
+  ) as Partial<TripDetails>;
+  const next: TripDetails = { ...current, ...extractedFields };
+  if (extractedDetails?.specialRequests?.length) {
+    next.specialRequests = Array.from(
+      new Set([...(current.specialRequests ?? []), ...extractedDetails.specialRequests]),
+    );
+  }
   const route = message.match(/from\s+(.+?)\s+to\s+(.+?)(?:[.,]|$|\s+on\s+|\s+at\s+|\s+with\s+|\s+for\s+)/i);
   const chineseRoute = message.match(/(?:从|從|由)\s*(.+?)\s*(?:到|前往|去)\s*(.+?)(?=[，。,.]|$)/u);
   const fromOnly = message.match(/(?:collect\s+\w+\s+\w+\s+from|collect\s+\w+\s+from|from)\s+(.+?)(?:\s+at\s+|\s+on\s+|[.,]|$)/i);
   const travelingTo = message.match(/(?:traveling|travelling|going)\s+to\s+(.+?)(?:[.,]|$)/i);
   const dropOnly = message.match(/drop(?:\s|-)?off\s+(?:is|at|to)?\s*([a-z0-9\s'-]+)(?:[.,]|$)/i);
+  const explicitDropoff = extractExplicitDropoffLocation(message);
   const pickupOnly = message.match(/pick(?:\s|-)?up\s+(?:is|at|from)?\s*([a-z0-9\s'-]+)(?:[.,]|$)/i);
   const uppercaseFlight = message.match(/\b[A-Z]{2}\s?\d{1,4}\b/);
   const labelledFlight = message.match(/\bflight(?:\s+number)?\s*(?:is|:)?\s*([a-z0-9]{2}\s?\d{1,4})\b/i);
@@ -407,6 +429,17 @@ function mergeTripDetails(
 
   if (!next.dropoffLocation && dropOnly) {
     next.dropoffLocation = cleanText(dropOnly[1]);
+  }
+
+  if (!next.dropoffLocation && explicitDropoff) {
+    next.dropoffLocation = explicitDropoff;
+  }
+
+  // A customer often replies with only the hotel name or address after the
+  // assistant asks for it. Use the previous prompt as context so a bare
+  // location is stored instead of triggering the same question again.
+  if (!next.dropoffLocation && options.locationPrompted && looksLikeLocationReply(message)) {
+    next.dropoffLocation = cleanText(message);
   }
 
   if (lower.includes("airport") && !next.pickupLocation && !lower.includes("drop")) {
@@ -459,9 +492,9 @@ function mergeTripDetails(
     next.time = normalizeTime(time[0]);
   }
   if (flight) next.flightNumber = flight.toUpperCase().replace(/\s+/, " ");
-  if (!flight) {
-    next.flightNumber = trustedCurrent.flightNumber;
-    next.flightTime = trustedCurrent.flightTime;
+  if (!flight && !extractedDetails?.flightNumber) {
+    next.flightNumber = current.flightNumber;
+    next.flightTime = current.flightTime;
   }
   if (passengers) next.passengerCount = parseNumberToken(passengers[1]);
   else if (chinesePassengers) next.passengerCount = Number(chinesePassengers[1]);
@@ -740,8 +773,60 @@ function createEventSummary(type: EventType, message: string): string {
   return `${type} detected from customer message: "${message.slice(0, 110)}${message.length > 110 ? "..." : ""}"`;
 }
 
+function hasRecentLocationPrompt(messages?: ConversationMessage[]): boolean {
+  const latestAiMessage = [...(messages ?? [])]
+    .reverse()
+    .find((message) => message.role === "ai");
+
+  return Boolean(
+    latestAiMessage &&
+      /hotel|accommodation|destination|drop[- ]?off|address|下车|酒店|住宿|目的地|地址/iu.test(
+        latestAiMessage.text,
+      ),
+  );
+}
+
+function extractExplicitDropoffLocation(message: string): string | undefined {
+  const matches = [
+    message.match(
+      /\b(?:the\s+)?address\s+of\s+(?:my\s+)?(?:hotel|accommodation)\s*(?:is(?:\s+at)?|at|:)\s*(.+?)(?=[.!?。！？]|$)/iu,
+    ),
+    message.match(
+      /\b(?:my\s+)?(?:hotel|accommodation|destination|drop[- ]?off)(?:\s+(?:address|location))?\s*(?:is(?:\s+at)?|at|:)\s*(.+?)(?=[.!?。！？]|$)/iu,
+    ),
+    message.match(/\baddress\s*(?:is(?:\s+at)?|at|:)\s*(.+?)(?=[.!?。！？]|$)/iu),
+    message.match(
+      /(?:酒店|住宿|目的地|下车(?:地点|地址)?|地址)\s*(?:地址)?\s*(?:是|在|为|：|:)\s*(.+?)(?=[，。！？,.!?]|$)/u,
+    ),
+  ];
+
+  const value = matches.find((match) => match?.[1])?.[1];
+  return value ? cleanText(value) : undefined;
+}
+
+function looksLikeLocationReply(message: string): boolean {
+  const compact = message.trim();
+  if (compact.length < 3) return false;
+  if (
+    /\b(?:yes|no|okay|ok|tomorrow|today|tonight|passengers?|people|bags?|luggage|am|pm)\b|明天|今天|今晚|乘客|行李/iu.test(
+      compact,
+    )
+  ) {
+    return false;
+  }
+
+  return /hotel|address|street|road|avenue|station|airport|tokyo|shinjuku|shibuya|ginza|ueno|asakusa|yokohama|narita|haneda|酒店|地址|街|路|丁目|番地|号|机场|车站|車站/iu.test(
+    compact,
+  );
+}
+
 function cleanText(value: string): string {
-  return value.trim().replace(/\s+/g, " ").replace(/\bthe\b$/i, "").trim();
+  return value
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[，。！？,.!?]+$/u, "")
+    .replace(/\bthe\b$/i, "")
+    .trim();
 }
 
 function parseNumberToken(value: string): number {

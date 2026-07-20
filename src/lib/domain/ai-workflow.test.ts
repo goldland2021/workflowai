@@ -271,6 +271,67 @@ describe("analyzeCustomerTurn - multi-turn trip state", () => {
       vehiclePreference: "丰田阿尔法",
     });
   });
+
+  it("captures an explicitly supplied hotel address as the drop-off location", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "My hotel address is 1-2-3 Shinjuku, Tokyo.",
+      currentTripDetails: {
+        serviceType: "airport_pickup",
+        pickupLocation: "Narita Airport",
+        date: "Tomorrow",
+        time: "10:00",
+        passengerCount: 2,
+      },
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails.dropoffLocation).toBe("1-2-3 Shinjuku, Tokyo");
+    expect(result.aiMessage.text).not.toMatch(/drop-off location/i);
+  });
+
+  it("captures a Chinese hotel address instead of asking for it again", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "酒店地址是东京都新宿区西新宿2-8-1。",
+      currentTripDetails: {
+        serviceType: "airport_pickup",
+        pickupLocation: "成田机场",
+        date: "明天",
+        time: "10:00",
+        passengerCount: 2,
+      },
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails.dropoffLocation).toBe("东京都新宿区西新宿2-8-1");
+    expect(result.aiMessage.text).not.toMatch(/下车地点/);
+  });
+
+  it("uses a bare hotel reply when the previous AI message asked for the address", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "Park Hyatt Tokyo",
+      currentTripDetails: {
+        serviceType: "airport_pickup",
+        pickupLocation: "Narita Airport",
+        date: "Tomorrow",
+        time: "10:00",
+        passengerCount: 2,
+      },
+      recentMessages: [{
+        id: "msg_ai_address",
+        role: "ai",
+        text: "Could you provide your hotel address?",
+        createdAt: "2026-07-20T00:00:00.000Z",
+        channel: "website_widget",
+      }],
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails.dropoffLocation).toBe("Park Hyatt Tokyo");
+    expect(result.aiMessage.text).not.toMatch(/drop-off location/i);
+  });
 });
 
 describe("analyzeCustomerTurn - message presentation", () => {
