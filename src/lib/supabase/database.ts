@@ -9,6 +9,7 @@ import type {
   DriverDetails,
   EventType,
   FlightArrivalDetails,
+  PricingSnapshot,
   QuoteSuggestion,
   ReceiptRequest,
   TripDetails,
@@ -644,6 +645,7 @@ export type BookingRow = {
   vehicle_preference: string | null;
   special_requests: string[] | null;
   route_distance_km: number | null;
+  toll_yen: number | null;
   estimated_drive_time_min: number | null;
   approved_price: number | null;
   currency: string | null;
@@ -660,6 +662,7 @@ export type BookingRow = {
   receipt_name: string | null;
   special_notes: string[] | null;
   confirmation_text: string | null;
+  pricing_snapshot: PricingSnapshot | null;
   created_at: string;
   updated_at?: string;
 };
@@ -738,6 +741,7 @@ export async function upsertBooking(
     vehicle_preference: tripDetails.vehiclePreference,
     special_requests: tripDetails.specialRequests,
     route_distance_km: tripDetails.routeDistanceKm,
+    toll_yen: tripDetails.tollYen,
     estimated_drive_time_min: tripDetails.estimatedDriveTimeMinutes,
     flight_arrival: tripDetails.flightArrival,
   };
@@ -790,6 +794,7 @@ export type BossInboxRow = {
   suggested_price: number | null;
   currency: string | null;
   vehicle_type: string | null;
+  pricing_snapshot: PricingSnapshot | null;
   created_at: string;
 };
 
@@ -821,6 +826,7 @@ export async function createBossInboxItem(
     suggested_price: item.quote?.suggestedPrice,
     currency: item.quote?.currency,
     vehicle_type: item.quote?.vehicleType,
+    pricing_snapshot: item.quote?.pricing,
     dedupe_key: dedupeKey,
   };
 
@@ -883,6 +889,7 @@ export function bookingRowToTripDetails(booking: BookingRow): TripDetails {
     luggageCount: booking.luggage_count ?? undefined,
     vehiclePreference: booking.vehicle_preference ?? undefined,
     routeDistanceKm: booking.route_distance_km ?? undefined,
+    tollYen: booking.toll_yen ?? undefined,
     estimatedDriveTimeMinutes: booking.estimated_drive_time_min ?? undefined,
     specialRequests: booking.special_requests ?? undefined,
   };
@@ -922,6 +929,8 @@ export function bookingRowToQuote(row: BookingRow): QuoteSuggestion | undefined 
     reason: "Owner-approved quote",
     confidence: 100,
     missingFields: [],
+    approvalSource: "owner",
+    pricing: row.pricing_snapshot ?? undefined,
   };
 }
 
@@ -940,6 +949,7 @@ function rowToQuote(row: BossInboxRow | BookingRow): QuoteSuggestion | undefined
     reason: row.reason ?? "",
     confidence: row.confidence ?? 75,
     missingFields: [],
+    pricing: row.pricing_snapshot ?? undefined,
   };
 }
 
@@ -978,6 +988,7 @@ function rowToBossInboxItem(row: BossInboxRow): BossInboxItem {
           confidence: row.confidence ?? 75,
           missingFields: [],
           includedFees: ["Tolls", "Parking fees", "Taxes"],
+          pricing: row.pricing_snapshot ?? undefined,
         },
   };
 }
@@ -1081,6 +1092,7 @@ export async function updateBossInboxStatus(
         currency: quote?.currency,
         vehicle_type: quote?.vehicleType,
         reason: quote?.reason,
+        pricing_snapshot: quote?.pricing,
         updated_at: new Date().toISOString(),
       }),
     },
@@ -1164,11 +1176,12 @@ export async function updateBossInboxStatus(
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({
-        approved_price: quote.suggestedPrice,
-        currency: quote.currency,
-        included_fees: quote.includedFees,
-        status: "ready",
+        body: JSON.stringify({
+          approved_price: quote.suggestedPrice,
+          currency: quote.currency,
+          included_fees: quote.includedFees,
+          pricing_snapshot: quote.pricing,
+          status: "ready",
         confirmation_text: summary.confirmationText,
         updated_at: new Date().toISOString(),
       }),

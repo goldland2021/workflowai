@@ -7,6 +7,7 @@ import type {
   TripDetails,
 } from "./types";
 import { buildBookingConfirmationText } from "./booking-confirmation";
+import { DEFAULT_PRICING_POLICY } from "./pricing";
 
 export const airportTransferConfiguration: BusinessConfiguration = {
   companyProfile: {
@@ -180,6 +181,7 @@ export const airportTransferConfiguration: BusinessConfiguration = {
     "Ask one main follow-up question at a time.",
     "Generate quote suggestions, not final commercial decisions.",
   ],
+  pricingPolicy: DEFAULT_PRICING_POLICY,
   vehicles: [
     {
       id: "vehicle_alphard",

@@ -24,6 +24,7 @@ const memoryFields: Array<keyof TripDetails> = [
   "luggageCount",
   "vehiclePreference",
   "routeDistanceKm",
+  "tollYen",
   "estimatedDriveTimeMinutes",
   "specialRequests",
   "flightArrival",
@@ -33,6 +34,7 @@ const numericFields = new Set<keyof TripDetails>([
   "passengerCount",
   "luggageCount",
   "routeDistanceKm",
+  "tollYen",
   "estimatedDriveTimeMinutes",
 ]);
 

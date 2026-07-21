@@ -300,7 +300,11 @@ Included:
 
 Important rule:
 
-V1 provides quote suggestions, not automatic final pricing decisions.
+V1 may send a standard quote automatically when the configured pricing policy
+has a high-confidence match. This is a pricing-policy decision, not a promise
+that a vehicle is available or that the booking is confirmed. Discounts,
+route changes, multi-vehicle requests, urgent trips, and low-confidence routes
+still require owner approval.
 
 Not required in V1:
 

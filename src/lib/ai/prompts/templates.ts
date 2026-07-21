@@ -80,6 +80,7 @@ export function buildReplyPrompt(params: {
   contactInfo: string;
   quoteSummary: string;
   quoteApproved?: boolean;
+  quoteAutoApproved?: boolean;
 }): { system: string; prompt: string; temperature: number } {
   const isZh = params.lang === "zh";
   const isAr = params.lang === "ar";
@@ -89,7 +90,13 @@ export function buildReplyPrompt(params: {
       : isAr
         ? "- إذا كان السعر مقدمًا على أنه معتمد من المالك، أخبر العميل بوضوح أن السعر النهائي مؤكد، ولا تقل إنه لا يزال بانتظار تأكيد المالك"
         : "- When the system provides an owner-approved quote, clearly tell the customer that the final price is confirmed; do not say it is still awaiting owner confirmation or only provisional"
-    : isZh
+    : params.quoteAutoApproved
+      ? isZh
+        ? "- 这是系统根据已批准的标准定价规则生成的标准报价，不要说价格仍需老板确认；车辆可用性仍需在安排预订时确认"
+        : isAr
+          ? "- هذا سعر قياسي صادر عن قاعدة التسعير المعتمدة في النظام. لا تقل إن السعر لا يزال بانتظار موافقة المالك، لكن وضّح أن توفر السيارة يُؤكد عند ترتيب الحجز"
+          : "- This is a standard rate generated from the approved pricing policy. Do not say the price is awaiting owner confirmation; vehicle availability is still confirmed when the booking is arranged"
+      : isZh
       ? "- 不要自行编造价格。若系统提供参考报价，必须向客户明确说明币种、金额和建议车型，并标注为初步/参考报价；最终价格和车辆可用性仍需老板确认"
       : isAr
         ? "- لا تخترع الأسعار. إذا تم تزويدك بتقدير من النظام، اذكر العملة والمبلغ والسيارة المقترحة بوضوح، ووضّح أنه تقدير أولي يحتاج إلى تأكيد المالك"
@@ -100,11 +107,29 @@ export function buildReplyPrompt(params: {
       : isAr
         ? "السعر النهائي المعتمد من المالك (يجب إخبار العميل بأنه مؤكد):"
         : "Owner-approved final quote (tell the customer that the price is confirmed):"
-    : isZh
+    : params.quoteAutoApproved
+      ? isZh
+        ? "系统标准报价（必须告诉客户价格和车型，但说明车辆可用性将在安排预订时确认）："
+        : isAr
+          ? "السعر القياسي من سياسة النظام (اذكر السعر والسيارة، مع توضيح أن توفر السيارة يُؤكد عند ترتيب الحجز):"
+          : "System standard rate (include the price and vehicle, and explain that vehicle availability is confirmed when the booking is arranged):"
+      : isZh
       ? "系统提供的参考报价（必须告知客户，并说明最终仍需老板确认）："
       : isAr
         ? "تقدير النظام المبدئي (يجب ذكره للعميل مع توضيح أن التأكيد النهائي للمالك):"
         : "System-provided provisional quote (include it in the customer reply and explain that the owner must confirm it):";
+
+  const followUpRule = params.quoteAutoApproved
+    ? isZh
+      ? "- 不要声称车辆已经安排；说明车辆可用性将在安排预订时确认"
+      : isAr
+        ? "- لا تدّع أن السيارة تم ترتيبها؛ وضّح أن توفرها يُؤكد عند ترتيب الحجز"
+        : "- Do not claim that a vehicle has already been arranged; say availability will be confirmed when the booking is arranged"
+    : isZh
+      ? "- 不要声称邮件、报价或消息已经发送或会自动发送；应说明老板批准后会使用已记录的联系方式跟进"
+      : isAr
+        ? "- لا تدّع أن رسالة أو عرض سعر أُرسل تلقائيًا؛ اشرح أن المالك سيتابع بعد الموافقة"
+        : "- Never claim that an email, quote, or message has already been sent or will be sent automatically. Say the owner will follow up using the captured contact after approval";
 
   const system = isZh
     ? `你是"${params.companyName}"的专业AI客服员工，负责机场接送服务。
@@ -135,7 +160,7 @@ ${params.aiBoundaries.map((b) => `- ${b}`).join("\n") || "（无）"}
 - 回答客户问题时优先参考FAQ
 - 客户有购买意向时，礼貌引导提供联系方式
  ${quoteRule}
-- 不要声称邮件、报价或消息已经发送或会自动发送；应说明老板批准后会使用已记录的联系方式跟进
+${followUpRule}
 - 语气保持专业高效，像经验丰富的接送客服
  - 如果系统提供了参考报价，必须在回复中告知客户，不要只说“会准备报价”`
 
@@ -170,7 +195,7 @@ ${params.aiBoundaries.map((b) => `- ${b}`).join("\n") || "لا توجد"}
 - استخدم الأسئلة الشائعة عند الإجابة
 - اطلب وسيلة تواصل بلطف عند وجود نية حجز
  ${quoteRule}
-- لا تدّع أن رسالة أو عرض سعر أُرسل تلقائيًا؛ اشرح أن المالك سيتابع بعد الموافقة
+${followUpRule}
 - حافظ على أسلوب مهني ومختصر
  - إذا قدم النظام تقديرًا، يجب ذكره للعميل بوضوح، ولا تكتفِ بالقول إنك ستجهز عرضًا للسعر`
 
@@ -204,7 +229,7 @@ Rules:
 - Reference FAQ when answering questions
 - Gently ask for contact info when purchase intent is detected
  ${quoteRule}
-- Never claim that an email, quote, or message has already been sent or will be sent automatically. Say the owner will follow up using the captured contact after approval
+${followUpRule}
 - Stay professional, like an experienced transfer agent
  - If a quote summary is provided, include it in the reply instead of only saying that a quote will be prepared`;
 

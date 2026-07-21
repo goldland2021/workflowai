@@ -109,6 +109,26 @@ describe("analyzeCustomerTurn - quote suggestion rules", () => {
     expect(result.bossInboxItems.some((item) => item.type === "quote_approval")).toBe(false);
   });
 
+  it("auto-sends a high-confidence standard quote without creating a quote approval item", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "Please quote this route.",
+      currentTripDetails: {
+        ...completeTripDetails,
+        luggageCount: 3,
+        routeDistanceKm: 72,
+      },
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.quoteAutoApproved).toBe(true);
+    expect(result.quote?.currency).toBe("JPY");
+    expect(result.quote?.suggestedPrice).toBe(23000);
+    expect(result.bossInboxItems.some((item) => item.type === "quote_approval")).toBe(false);
+    expect(result.aiMessage.text).toMatch(/standard rate|标准报价/iu);
+    expect(result.aiMessage.text).not.toMatch(/owner confirmation|老板确认/iu);
+  });
+
   it("uses an owner-approved quote on later customer turns without reopening approval", async () => {
     const result = await analyzeCustomerTurn({
       message: "Can you confirm the quote?",

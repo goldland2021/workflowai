@@ -98,6 +98,40 @@ export const PricingRuleSchema = z
   })
   .strict();
 
+const PricingAirportRuleSchema = z
+  .object({
+    aliases: z.array(z.string().min(1)),
+    baseYen: numberFromInput(z.number().nonnegative()),
+    minimumYen: numberFromInput(z.number().nonnegative()),
+    standardTollYen: numberFromInput(z.number().nonnegative()),
+  })
+  .strict();
+
+const PricingFixedRouteSchema = z
+  .object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    keywords: z.array(z.string().min(1)),
+    pricesByAirport: z.record(z.string(), numberFromInput(z.number().nonnegative())),
+  })
+  .strict();
+
+export const PricingPolicySchema = z
+  .object({
+    engineVersion: z.string().min(1),
+    currency: z.string().min(1),
+    cityRateYenPerKm: numberFromInput(z.number().nonnegative()),
+    priceBufferYen: numberFromInput(z.number().nonnegative()),
+    hiaceSurchargeYen: numberFromInput(z.number().nonnegative()),
+    standardTollAllowanceYen: numberFromInput(z.number().nonnegative()),
+    autoQuoteEnabled: z.boolean(),
+    autoQuoteMinConfidence: numberFromInput(z.number().min(0).max(100)),
+    airports: z.record(z.string(), PricingAirportRuleSchema),
+    fixedRoutes: z.array(PricingFixedRouteSchema),
+    interAirportFares: z.record(z.string(), numberFromInput(z.number().nonnegative())),
+  })
+  .strict();
+
 export const EscalationRuleSchema = z
   .object({
     id: z.string().min(1),
@@ -157,6 +191,7 @@ export const BusinessConfigurationSchema = z
     requiredBookingFields: z.array(RequiredBookingFieldSchema),
     faq: z.array(FAQSchema),
     aiBehaviorBoundaries: z.array(z.string().min(1)),
+    pricingPolicy: PricingPolicySchema.optional(),
     vehicles: z.array(VehicleSchema).optional(),
   })
   .strict();

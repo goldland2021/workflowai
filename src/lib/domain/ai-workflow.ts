@@ -23,6 +23,7 @@ import { hasRealAI } from "../ai";
 import { redactContactDetails } from "../ai/pii";
 import { resolveConversationLang, type PromptLang } from "../ai/prompts/templates";
 import { formatFlightArrivalDetails } from "../flight/arrival";
+import { calculateWorkflowQuote } from "./pricing";
 
 const eventKeywords: Array<{
   type: EventType;
@@ -299,11 +300,15 @@ export async function analyzeCustomerTurn(params: {
   const quote = quoteUsesApprovedPrice
     ? params.approvedQuote
     : maybeCreateQuoteSuggestion(tripDetails, params.configuration, missingFields);
+  const quoteAutoApproved = Boolean(
+    quote && !quoteUsesApprovedPrice && quote.pricing?.approvalRequired === false,
+  );
 
   const bossInboxItems = createBossInboxItems({
     detectedEvents,
     quote,
     quoteApproved: quoteUsesApprovedPrice,
+    quoteAutoApproved,
     tripDetails,
     existingBossItems: params.existingBossItems,
     ownerApprovalEventTypes: new Set(
@@ -324,6 +329,7 @@ export async function analyzeCustomerTurn(params: {
       missingFields,
       quote,
       quoteApproved: quoteUsesApprovedPrice,
+      quoteAutoApproved,
       configuration: params.configuration,
       recentMessages: params.recentMessages?.map((message) => ({
         ...message,
@@ -347,6 +353,7 @@ export async function analyzeCustomerTurn(params: {
       missingFields,
       quote,
       quoteApproved: quoteUsesApprovedPrice,
+      quoteAutoApproved,
       lang,
       createdAt: now.toISOString(),
     });
@@ -358,6 +365,8 @@ export async function analyzeCustomerTurn(params: {
     contact,
     detectedEvents,
     bossInboxItems,
+    quote,
+    quoteAutoApproved,
   };
 }
 
@@ -657,6 +666,25 @@ function maybeCreateQuoteSuggestion(
 ): QuoteSuggestion | undefined {
   if (missingFields.length > 0) return undefined;
 
+  const workflowQuote = calculateWorkflowQuote(tripDetails, configuration);
+  if (workflowQuote) {
+    return {
+      id: `quote_${Date.now()}`,
+      serviceType: tripDetails.serviceType,
+      suggestedPrice: workflowQuote.priceYen,
+      currency: configuration.pricingPolicy?.currency ?? "JPY",
+      vehicleType: workflowQuote.vehicleType,
+      includedFees: ["Tolls", "Parking fees", "Taxes"],
+      routeDistanceKm: tripDetails.routeDistanceKm,
+      estimatedDriveTimeMinutes: tripDetails.estimatedDriveTimeMinutes,
+      reason: workflowQuote.reason,
+      confidence: workflowQuote.pricing.confidence,
+      missingFields,
+      approvalSource: workflowQuote.pricing.approvalRequired ? undefined : "pricing_policy",
+      pricing: workflowQuote.pricing,
+    };
+  }
+
   const wantsLargeVehicle =
     tripDetails.vehiclePreference?.includes("海狮") || tripDetails.vehiclePreference?.toLowerCase().includes("van") ||
     (tripDetails.passengerCount ?? 0) >= 4 ||
@@ -705,6 +733,7 @@ function createBossInboxItems(params: {
   detectedEvents: DetectedEvent[];
   quote?: QuoteSuggestion;
   quoteApproved: boolean;
+  quoteAutoApproved: boolean;
   tripDetails: TripDetails;
   existingBossItems: ExistingBossInboxItem[];
   ownerApprovalEventTypes: Set<EventType>;
@@ -738,7 +767,7 @@ function createBossInboxItems(params: {
     }));
 
   const quoteItem =
-    params.quote && !params.quoteApproved && !existingQuoteNeedsReview
+    params.quote && !params.quoteApproved && !params.quoteAutoApproved && !existingQuoteNeedsReview
       ? [
           {
             id: `boss_${params.quote.id}`,
@@ -767,6 +796,7 @@ function createAiMessage(params: {
   missingFields: TripFieldKey[];
   quote?: QuoteSuggestion;
   quoteApproved: boolean;
+  quoteAutoApproved: boolean;
   lang: PromptLang;
   createdAt: string;
 }): ConversationMessage {
@@ -781,16 +811,16 @@ function createAiMessage(params: {
 
   if (params.contact && params.quote) {
     text = params.lang === "zh"
-      ? `谢谢，已记录您的${params.contact.method}联系方式。${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved })}${eventText}`
-      : `Thanks, I have saved your ${params.contact.method}. ${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved })}${eventText}`;
+      ? `谢谢，已记录您的${params.contact.method}联系方式。${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved, autoApproved: params.quoteAutoApproved })}${eventText}`
+      : `Thanks, I have saved your ${params.contact.method}. ${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved, autoApproved: params.quoteAutoApproved })}${eventText}`;
   } else if (params.contact) {
     text = params.lang === "zh"
       ? `谢谢，已记录您的${params.contact.method}联系方式。`
       : `Thanks, I have saved your ${params.contact.method}.`;
   } else if (params.quote) {
     text = params.lang === "zh"
-      ? `${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved })}${eventText}`
-      : formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved }) + eventText;
+      ? `${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved, autoApproved: params.quoteAutoApproved })}${eventText}`
+      : formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved, autoApproved: params.quoteAutoApproved }) + eventText;
   } else if (params.missingFields.length > 0) {
     const nextField = params.missingFields[0];
     const contactAsk = purchaseIntent

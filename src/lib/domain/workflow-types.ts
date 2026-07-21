@@ -4,6 +4,7 @@ import type {
   CapturedContact,
   ConversationMessage,
   DetectedEvent,
+  QuoteSuggestion,
   TripDetails,
 } from "./types";
 import type { PromptLang } from "../ai/prompts/templates";
@@ -35,6 +36,8 @@ export interface WorkflowResult {
   contact?: CapturedContact;
   detectedEvents: DetectedEvent[];
   bossInboxItems: BossInboxItem[];
+  quote?: QuoteSuggestion;
+  quoteAutoApproved?: boolean;
   conversationId?: string | null;  // assigned by server
   isNewConversation?: boolean;
 }

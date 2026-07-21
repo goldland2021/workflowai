@@ -16,6 +16,7 @@ const requiredMigrations = [
   "010_idempotent_usage_reservations.sql",
   "011_structured_memory_and_learning.sql",
   "012_flight_arrival_details.sql",
+  "013_pricing_snapshots.sql",
 ];
 
 const files = (await readdir(migrationsDirectory)).filter((file) => file.endsWith(".sql"));
@@ -42,6 +43,7 @@ const migration009 = await readFile(resolve(migrationsDirectory, requiredMigrati
 const migration010 = await readFile(resolve(migrationsDirectory, requiredMigrations[9]), "utf8");
 const migration011 = await readFile(resolve(migrationsDirectory, requiredMigrations[10]), "utf8");
 const migration012 = await readFile(resolve(migrationsDirectory, requiredMigrations[11]), "utf8");
+const migration013 = await readFile(resolve(migrationsDirectory, requiredMigrations[12]), "utf8");
 if (!migration007.includes("customer_language")) {
   throw new Error("Migration 007 does not contain customer_language support.");
 }
@@ -59,6 +61,9 @@ if (!migration011.includes("conversation_memory") || !migration011.includes("lea
 }
 if (!migration012.includes("flight_arrival")) {
   throw new Error("Migration 012 is missing flight arrival storage.");
+}
+if (!migration013.includes("pricing_snapshot")) {
+  throw new Error("Migration 013 is missing pricing snapshot storage.");
 }
 
 if (process.env.CHECK_LIVE_DB === "true") {
@@ -79,6 +84,8 @@ if (process.env.CHECK_LIVE_DB === "true") {
     ["booking_events", "booking_events?select=event_type&limit=1"],
     ["learning_cases", "learning_cases?select=outcome&limit=1"],
     ["bookings.flight_arrival", "bookings?select=flight_arrival&limit=1"],
+    ["boss_inbox.pricing_snapshot", "boss_inbox?select=pricing_snapshot&limit=1"],
+    ["bookings.pricing_snapshot", "bookings?select=pricing_snapshot&limit=1"],
   ];
   for (const [label, path] of liveChecks) {
     const response = await fetch(`${url.replace(/\/$/, "")}/rest/v1/${path}`, {

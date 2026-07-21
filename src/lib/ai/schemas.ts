@@ -32,6 +32,7 @@ export const TripDetailsSchema = z.object({
   passengerCount: numberFromModelText(z.number()).optional(),
   luggageCount: numberFromModelText(z.number()).optional(),
   vehiclePreference: z.string().optional(),
+  tollYen: numberFromModelText(z.number().nonnegative()).optional(),
   specialRequests: z.union([z.array(z.string()), z.string().transform((value) => [value])]).optional(),
   flightArrival: z.object({
     flightNumber: z.string(),

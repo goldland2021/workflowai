@@ -81,6 +81,34 @@ export interface PricingRule {
   currency: string;
 }
 
+export interface PricingAirportRule {
+  aliases: string[];
+  baseYen: number;
+  minimumYen: number;
+  standardTollYen: number;
+}
+
+export interface PricingFixedRoute {
+  id: string;
+  label: string;
+  keywords: string[];
+  pricesByAirport: Record<string, number>;
+}
+
+export interface PricingPolicy {
+  engineVersion: string;
+  currency: string;
+  cityRateYenPerKm: number;
+  priceBufferYen: number;
+  hiaceSurchargeYen: number;
+  standardTollAllowanceYen: number;
+  autoQuoteEnabled: boolean;
+  autoQuoteMinConfidence: number;
+  airports: Record<string, PricingAirportRule>;
+  fixedRoutes: PricingFixedRoute[];
+  interAirportFares: Record<string, number>;
+}
+
 export interface EscalationRule {
   id: string;
   eventType: EventType;
@@ -128,6 +156,7 @@ export interface BusinessConfiguration {
   faq: FAQ[];
   aiBehaviorBoundaries: string[];
   vehicles?: Vehicle[];   // 可用车型列表
+  pricingPolicy?: PricingPolicy;
 }
 
 export interface ConversationMessage {
@@ -152,6 +181,7 @@ export interface TripDetails {
   luggageCount?: number;
   vehiclePreference?: string;
   routeDistanceKm?: number;
+  tollYen?: number;
   estimatedDriveTimeMinutes?: number;
   specialRequests?: string[];
   flightArrival?: FlightArrivalDetails;
@@ -221,6 +251,32 @@ export interface QuoteSuggestion {
   reason: string;
   confidence: number;
   missingFields: TripFieldKey[];
+  approvalSource?: "owner" | "pricing_policy";
+  pricing?: PricingSnapshot;
+}
+
+export type PricingSource = "fixed_route" | "distance_formula" | "business_rule";
+export type PricingConfidence = "high" | "medium" | "low";
+
+export interface PricingSnapshot {
+  engineVersion: string;
+  source: PricingSource;
+  confidence: number;
+  confidenceBand: PricingConfidence;
+  approvalRequired: boolean;
+  approvalReason?: string;
+  airportId?: string;
+  direction?: "pickup" | "dropoff";
+  routeDistanceKm?: number;
+  tollYen?: number;
+  waitingMinutes?: number;
+  matchedRuleId?: string;
+  vehicleType?: string;
+  vehicleCount: number;
+  unitPriceYen: number;
+  totalPriceYen: number;
+  priceLowYen?: number;
+  priceHighYen?: number;
 }
 
 export interface BossInboxItem {
