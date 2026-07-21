@@ -77,6 +77,7 @@ export function buildReplyPrompt(params: {
   customerMessage: string;
   tripJson: string;
   missingFields: string;
+  bookingMissingFields: string;
   contactInfo: string;
   quoteSummary: string;
   quoteApproved?: boolean;
@@ -225,6 +226,7 @@ Rules:
 - Send driver details and booking details as one compact separate block only when sending them for the first time or when explicitly requested
 - Avoid repeating "Thank you" or closing phrases in the same conversation
 - Ask ONE question at a time, prioritize missing quote fields
+- A quote may be given before the booking time is known; when a customer confirms a booking, ask only for the next missing booking field
 - Recommend suitable vehicle based on passenger/luggage count
 - Reference FAQ when answering questions
 - Gently ask for contact info when purchase intent is detected
@@ -243,7 +245,8 @@ ${params.recentHistory || "（无历史）"}
 当前已收集的行程信息：
 ${params.tripJson}
 
-缺失的关键字段：${params.missingFields || "无"}
+缺失的报价字段：${params.missingFields || "无"}
+预订仍缺字段：${params.bookingMissingFields || "无"}
 ${params.contactInfo ? `已捕获联系方式：${params.contactInfo}` : ""}
 ${params.quoteSummary ? `${quoteSummaryInstruction}${params.quoteSummary}` : ""}
 
@@ -259,7 +262,8 @@ ${params.recentHistory || "لا يوجد"}
 تفاصيل الرحلة الحالية:
 ${params.tripJson}
 
-الحقول الناقصة: ${params.missingFields || "لا يوجد"}
+حقول التسعير الناقصة: ${params.missingFields || "لا يوجد"}
+حقول الحجز الناقصة: ${params.bookingMissingFields || "لا يوجد"}
 ${params.contactInfo ? `تم تسجيل وسيلة التواصل: ${params.contactInfo}` : ""}
 ${params.quoteSummary ? `${quoteSummaryInstruction} ${params.quoteSummary}` : ""}
 
@@ -273,7 +277,8 @@ Latest customer message:
 Current trip details:
 ${params.tripJson}
 
-Missing fields: ${params.missingFields || "none"}
+Missing quote fields: ${params.missingFields || "none"}
+Missing booking fields: ${params.bookingMissingFields || "none"}
 ${params.contactInfo ? `Contact captured: ${params.contactInfo}` : ""}
 ${params.quoteSummary ? `${quoteSummaryInstruction} ${params.quoteSummary}` : ""}
 

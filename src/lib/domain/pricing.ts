@@ -1,6 +1,7 @@
 import type {
   BusinessConfiguration,
   PricingAirportRule,
+  PricingCityRoute,
   PricingPolicy,
   PricingSnapshot,
   PricingSource,
@@ -19,14 +20,15 @@ const DEFAULT_VEHICLES: Vehicle[] = [
     id: "vehicle_hiace",
     name: "Toyota HiAce",
     type: "HiAce",
-    capacity: { passengers: 8, luggage: 6 },
+    capacity: { passengers: 8, luggage: 12 },
   },
 ];
 
 export const DEFAULT_PRICING_POLICY: PricingPolicy = {
-  engineVersion: "workflowai-pricing-v1",
+  engineVersion: "workflowai-pricing-v2",
   currency: "JPY",
-  cityRateYenPerKm: 230,
+  cityRateYenPerKm: 200,
+  cityTransferMinimumYen: 18000,
   priceBufferYen: 2000,
   hiaceSurchargeYen: 5000,
   standardTollAllowanceYen: 3000,
@@ -78,6 +80,23 @@ export const DEFAULT_PRICING_POLICY: PricingPolicy = {
       pricesByAirport: { haneda: 40000, narita: 60000, yokohamaPort: 45000 },
     },
   ],
+  cityRoutes: [
+    {
+      id: "kyoto-usj",
+      label: "Kyoto to Universal Studios Japan",
+      pickupKeywords: ["ritz-carlton kyoto", "kyoto"],
+      dropoffKeywords: ["universal studios japan", "usj"],
+      oneWayYen: 22000,
+      roundTripYen: 40000,
+    },
+    {
+      id: "tokinoyu-hyatt-regency-tokyo",
+      label: "Tokinoyu Setsugetsuka to Hyatt Regency Tokyo",
+      pickupKeywords: ["tokinoyu", "setsugetsuka", "kyoritsu resort"],
+      dropoffKeywords: ["hyatt regency tokyo"],
+      oneWayYen: 40000,
+    },
+  ],
   interAirportFares: {
     "haneda:narita": 25000,
     "narita:haneda": 25000,
@@ -104,7 +123,15 @@ function roundTo1000(amount: number): number {
 }
 
 function resolvePolicy(configuration: BusinessConfiguration): PricingPolicy {
-  return configuration.pricingPolicy ?? DEFAULT_PRICING_POLICY;
+  if (!configuration.pricingPolicy) return DEFAULT_PRICING_POLICY;
+  return {
+    ...DEFAULT_PRICING_POLICY,
+    ...configuration.pricingPolicy,
+    airports: configuration.pricingPolicy.airports ?? DEFAULT_PRICING_POLICY.airports,
+    fixedRoutes: configuration.pricingPolicy.fixedRoutes ?? DEFAULT_PRICING_POLICY.fixedRoutes,
+    cityRoutes: configuration.pricingPolicy.cityRoutes ?? DEFAULT_PRICING_POLICY.cityRoutes,
+    interAirportFares: configuration.pricingPolicy.interAirportFares ?? DEFAULT_PRICING_POLICY.interAirportFares,
+  };
 }
 
 function findAirportId(value: string | undefined, policy: PricingPolicy): string | undefined {
@@ -157,6 +184,17 @@ function findTargetAirportId(targetText: string, policy: PricingPolicy): string 
   return findAirportId(targetText, policy);
 }
 
+function findCityRoute(trip: TripDetails, policy: PricingPolicy): PricingCityRoute | undefined {
+  const pickup = normalize(trip.pickupLocation);
+  const dropoff = normalize(trip.dropoffLocation);
+  if (!pickup || !dropoff) return undefined;
+
+  return (policy.cityRoutes ?? []).find((route) =>
+    route.pickupKeywords.some((keyword) => pickup.includes(normalize(keyword))) &&
+    route.dropoffKeywords.some((keyword) => dropoff.includes(normalize(keyword))),
+  );
+}
+
 function chooseVehicle(trip: TripDetails, configuration: BusinessConfiguration): {
   vehicle: Vehicle;
   count: number;
@@ -164,7 +202,11 @@ function chooseVehicle(trip: TripDetails, configuration: BusinessConfiguration):
 } {
   const vehicles = configuration.vehicles?.length ? configuration.vehicles : DEFAULT_VEHICLES;
   const passengerCount = trip.passengerCount ?? 0;
-  const luggageCount = trip.luggageCount ?? 0;
+  const luggageCount = trip.luggageBreakdown
+    ? (trip.luggageBreakdown.large ?? 0) +
+      (trip.luggageBreakdown.medium ?? 0) +
+      (trip.luggageBreakdown.small ?? 0) || trip.luggageBreakdown.total
+    : trip.luggageCount ?? 0;
   const preference = normalize(trip.vehiclePreference);
   const requestedHiace = /hiace|海狮|海獅|van|大型|面包|麵包/.test(preference);
   const requestedAlphard = /alphard|阿尔法|阿爾法|アルファード/.test(preference);
@@ -223,6 +265,9 @@ export function calculateWorkflowQuote(
   trip: TripDetails,
   configuration: BusinessConfiguration,
 ): WorkflowQuoteResult | undefined {
+  if (trip.serviceType === "city_transfer" || trip.serviceType === "round_trip") {
+    return calculateCityTransferQuote(trip, configuration);
+  }
   if (trip.serviceType !== "airport_pickup" && trip.serviceType !== "airport_dropoff") return undefined;
 
   const policy = resolvePolicy(configuration);
@@ -316,6 +361,70 @@ export function calculateWorkflowQuote(
     reason: [
       `WorkflowAI pricing ${policy.engineVersion}`,
       source === "fixed_route" ? `matched ${matchedRuleId}` : "distance-based airport rule",
+      `${vehicle.name}${count > 1 ? ` × ${count}` : ""}`,
+      reason ? `owner review: ${reason}` : "eligible for standard policy quote",
+    ].join("; "),
+    pricing,
+  };
+}
+
+function calculateCityTransferQuote(
+  trip: TripDetails,
+  configuration: BusinessConfiguration,
+): WorkflowQuoteResult | undefined {
+  const policy = resolvePolicy(configuration);
+  const { vehicle, count, capacityExceeded } = chooseVehicle(trip, configuration);
+  const cityRoute = findCityRoute(trip, policy);
+  const routeDistanceKnown = typeof trip.routeDistanceKm === "number" && trip.routeDistanceKm > 0;
+  const specialRequest = specialPricingRequest(trip);
+  const routePrice = trip.serviceType === "round_trip" && cityRoute?.roundTripYen
+    ? cityRoute.roundTripYen
+    : cityRoute?.oneWayYen;
+  const source: PricingSource = cityRoute ? "fixed_route" : routeDistanceKnown ? "distance_formula" : "business_rule";
+  const confidence = cityRoute ? 96 : routeDistanceKnown ? 84 : 55;
+  const unitBasePrice = routePrice ?? roundTo1000(Math.max(
+    policy.cityTransferMinimumYen ?? 18000,
+    (trip.routeDistanceKm ?? 0) * policy.cityRateYenPerKm,
+  ));
+  const vehicleSurcharge = !cityRoute && /hiace|海狮|海獅|van/i.test(`${vehicle.type}${vehicle.name}`)
+    ? policy.hiaceSurchargeYen
+    : 0;
+  const unitPriceYen = unitBasePrice + vehicleSurcharge;
+  const totalPriceYen = unitPriceYen * count;
+  const reason = approvalReason({
+    policy,
+    confidence,
+    routeDistanceKnown,
+    vehicleCount: count,
+    capacityExceeded,
+    specialRequest,
+    source,
+  });
+  const pricing: PricingSnapshot = {
+    engineVersion: policy.engineVersion,
+    source,
+    confidence,
+    confidenceBand: confidenceBand(confidence),
+    approvalRequired: Boolean(reason),
+    approvalReason: reason,
+    routeDistanceKm: trip.routeDistanceKm,
+    tollYen: trip.tollYen,
+    waitingMinutes: 30,
+    matchedRuleId: cityRoute?.id,
+    vehicleType: vehicle.name,
+    vehicleCount: count,
+    unitPriceYen,
+    totalPriceYen,
+    priceLowYen: totalPriceYen,
+    priceHighYen: totalPriceYen + policy.priceBufferYen * count,
+  };
+
+  return {
+    priceYen: totalPriceYen,
+    vehicleType: count > 1 ? `${count} × ${vehicle.name}` : vehicle.name,
+    reason: [
+      `WorkflowAI pricing ${policy.engineVersion}`,
+      cityRoute ? `matched ${cityRoute.id}` : routeDistanceKnown ? "distance-based city rule" : "city transfer minimum",
       `${vehicle.name}${count > 1 ? ` × ${count}` : ""}`,
       reason ? `owner review: ${reason}` : "eligible for standard policy quote",
     ].join("; "),

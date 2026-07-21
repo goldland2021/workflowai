@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { TripDetailsSchema, DetectedEventSchema } from "@/lib/ai/schemas";
-import { airportTransferConfiguration } from "@/lib/domain/airport-transfer";
+import {
+  airportTransferConfiguration,
+  normalizeBusinessConfiguration,
+} from "@/lib/domain/airport-transfer";
 import { analyzeCustomerTurn } from "@/lib/domain/ai-workflow";
 import {
   BossInboxStatusSchema,
@@ -45,6 +48,7 @@ import { resolveConversationLang } from "@/lib/ai/prompts/templates";
 import { hashIdempotencyRequest, normalizeIdempotencyKey } from "@/lib/domain/idempotency";
 import { getChangedTripFields } from "@/lib/domain/memory";
 import { appendFlightArrivalToReply, lookupFlightArrival } from "@/lib/flight/arrival";
+import { enrichTripDetailsWithGoogleMaps } from "@/lib/maps/route-enrichment";
 
 export const runtime = "nodejs";
 
@@ -245,7 +249,7 @@ export async function POST(request: Request) {
         : Promise.resolve(null),
     ]);
 
-    configToUse = persistedConfig ?? airportTransferConfiguration;
+    configToUse = normalizeBusinessConfiguration(persistedConfig ?? airportTransferConfiguration);
     if (!conversationId && existingSessionConversation) {
       conversationId = existingSessionConversation.id;
     }
@@ -407,6 +411,7 @@ export async function POST(request: Request) {
       currentTripDetails,
       configuration: configToUse,
       existingBossItems,
+      routeEnricher: enrichTripDetailsWithGoogleMaps,
       approvedQuote,
       recentMessages: recentMessagesForAI,
       customerLanguage,

@@ -10,7 +10,7 @@ import type {
   TripFieldKey,
 } from "./types";
 import type { ExistingBossInboxItem, WorkflowResult } from "./workflow-types";
-import { getMissingQuoteFields } from "./booking-workflow";
+import { getMissingBookingFields, getMissingQuoteFields } from "./booking-workflow";
 
 // Real AI integration (modular - falls back gracefully if no key)
 import {
@@ -117,7 +117,7 @@ const eventKeywords: Array<{
   },
   {
     type: "Payment Coordination",
-    keywords: ["pay cash", "pay the driver", "payment", "paid", "付款"],
+    keywords: ["pay", "payment", "paid", "cash", "paypal", "visa", "credit card", "pay the driver", "付款", "支付", "刷卡", "现金"],
     severity: "low",
     ownerAction: "Confirm payment method and which driver should receive payment.",
   },
@@ -194,6 +194,7 @@ export async function analyzeCustomerTurn(params: {
   currentTripDetails: TripDetails;
   configuration: BusinessConfiguration;
   existingBossItems: ExistingBossInboxItem[];
+  routeEnricher?: (tripDetails: TripDetails) => Promise<TripDetails>;
   approvedQuote?: QuoteSuggestion;
   recentMessages?: ConversationMessage[];
   customerLanguage?: PromptLang;
@@ -290,7 +291,16 @@ export async function analyzeCustomerTurn(params: {
   // but high-impact event types still require explicit customer intent.
   detectedEvents = filterDetectedEventsForMessage(params.message, detectedEvents);
 
+  if (params.routeEnricher) {
+    try {
+      tripDetails = await params.routeEnricher(tripDetails);
+    } catch {
+      // Route enrichment is an accuracy improvement, not a reason to block chat.
+    }
+  }
+
   const missingFields = getMissingQuoteFields(tripDetails);
+  const missingBookingFields = getMissingBookingFields(tripDetails);
 
   // Pricing is owned by configured business rules, never invented by the
   // model. This also removes an entire sequential LLM round trip.
@@ -331,6 +341,7 @@ export async function analyzeCustomerTurn(params: {
       quoteApproved: quoteUsesApprovedPrice,
       quoteAutoApproved,
       configuration: params.configuration,
+      missingBookingFields,
       recentMessages: params.recentMessages?.map((message) => ({
         ...message,
         text: redactContactDetails(message.text),
@@ -354,6 +365,8 @@ export async function analyzeCustomerTurn(params: {
       quote,
       quoteApproved: quoteUsesApprovedPrice,
       quoteAutoApproved,
+      missingBookingFields,
+      configuration: params.configuration,
       lang,
       createdAt: now.toISOString(),
     });
@@ -500,7 +513,8 @@ function mergeTripDetails(
       new Set([...(current.specialRequests ?? []), ...extractedDetails.specialRequests]),
     );
   }
-  const route = message.match(/from\s+(.+?)\s+to\s+(.+?)(?:[.,]|$|\s+on\s+|\s+at\s+|\s+with\s+|\s+for\s+)/i);
+  const route = message.match(/(?:from\s+)?(.+?)\s+(?:to|->|→)\s+(.+?)(?=\s+(?:tomorrow|today|on|at|around|for|with|and\s+back|return(?:\s|$))|[.,!?]|$)/i);
+  const returnRoute = message.match(/\breturn\s+from\s+(.+?)\s+to\s+(.+?)(?=\s+(?:tomorrow|today|on|at|around|for|with)|[.,!?]|$)/i);
   const chineseRoute = message.match(/(?:从|從|由)\s*(.+?)\s*(?:到|前往|去)\s*(.+?)(?=[，。,.]|$)/u);
   const fromOnly = message.match(/(?:collect\s+\w+\s+\w+\s+from|collect\s+\w+\s+from|from)\s+(.+?)(?:\s+at\s+|\s+on\s+|[.,]|$)/i);
   const travelingTo = message.match(/(?:traveling|travelling|going)\s+to\s+(.+?)(?:[.,]|$)/i);
@@ -510,22 +524,28 @@ function mergeTripDetails(
   const uppercaseFlight = message.match(/\b[A-Z]{2}\s?\d{1,4}\b/);
   const labelledFlight = message.match(/\bflight(?:\s+number)?\s*(?:is|:)?\s*([a-z0-9]{2}\s?\d{1,4})\b/i);
   const flight = uppercaseFlight?.[0] ?? labelledFlight?.[1];
-  const time = message.match(/\b(?:[01]?\d|2[0-3])[:.][0-5]\d\s*(?:am|pm)?\b|\b\d{1,2}\s?(?:am|pm)\b/i);
+  const timePattern = /\b(?:[01]?\d|2[0-3])[:.][0-5]\d\s*(?:am|pm)?(?:\s*(?:-|–|to)\s*(?:[01]?\d|2[0-3])[:.][0-5]\d\s*(?:am|pm)?)?\b|\b\d{1,2}\s?(?:am|pm)\b/i;
+  const outboundMessage = message.split(/\b(?:and\s+)?back\b|\breturn(?:\s+from)?\b/i)[0];
+  const time = outboundMessage.match(timePattern);
+  const returnTime = message.match(/\b(?:and\s+)?back\b.{0,40}?\b(\d{1,2}(?::[0-5]\d)?\s*(?:am|pm))\b/i)?.[1] ??
+    message.match(/\breturn(?:\s+from)?\b.{0,40}?\b(\d{1,2}(?::[0-5]\d)?\s*(?:am|pm))\b/i)?.[1];
   const numberPattern = "\\d+|one|two|three|four|five|six|seven|eight|nine|ten";
   const passengers = message.match(new RegExp(`\\b(${numberPattern})\\s*(?:passengers?|people|pax|persons?|adults?)\\b`, "i"));
   const luggage = message.match(new RegExp(`\\b(${numberPattern})\\s*(?:small|medium|large|sized|medium-sized|large-sized|small-sized|\\s|-)*(?:bags?|luggage|suitcases?)\\b`, "i"));
   const chinesePassengers = message.match(/(\d+)\s*(?:位|名|个|個)?\s*(?:乘客|客人|人)/u);
   const chineseLuggage = message.match(/(\d+)\s*(?:件|个|個)?\s*(?:行李箱|行李|箱)/u);
   const terminal = message.match(new RegExp(`\\bterminal\\s*(${numberPattern})\\b`, "i"));
+  const luggageBreakdown = extractLuggageBreakdown(message);
 
   if (route) {
-    next.pickupLocation = cleanText(route[1]);
+    next.pickupLocation = cleanRoutePickupLocation(route[1]);
     next.dropoffLocation = cleanText(route[2]);
 
-    const pickupIsAirport = /airport|narita|haneda|kansai/i.test(route[1]);
+    const pickupIsAirport = /airport|narita|haneda|kansai/i.test(next.pickupLocation);
     const dropoffIsAirport = /airport|narita|haneda|kansai/i.test(route[2]);
     if (pickupIsAirport && !dropoffIsAirport) next.serviceType = "airport_pickup";
     if (dropoffIsAirport && !pickupIsAirport) next.serviceType = "airport_dropoff";
+    if (!pickupIsAirport && !dropoffIsAirport) next.serviceType = /\b(?:round trip|return|back)\b|往返|回程/iu.test(message) ? "round_trip" : "city_transfer";
   } else if (chineseRoute) {
     next.pickupLocation = cleanText(chineseRoute[1]);
     next.dropoffLocation = cleanText(chineseRoute[2]);
@@ -534,6 +554,17 @@ function mergeTripDetails(
     const dropoffIsAirport = /机场|機場|成田|羽田|关西|關西/u.test(chineseRoute[2]);
     if (pickupIsAirport && !dropoffIsAirport) next.serviceType = "airport_pickup";
     if (dropoffIsAirport && !pickupIsAirport) next.serviceType = "airport_dropoff";
+    if (!pickupIsAirport && !dropoffIsAirport) next.serviceType = /往返|回程|返回/u.test(message) ? "round_trip" : "city_transfer";
+  }
+
+  if (returnRoute) {
+    next.returnPickupLocation = cleanText(returnRoute[1]);
+    next.returnDropoffLocation = cleanText(returnRoute[2]);
+    next.serviceType = "round_trip";
+  } else if (next.pickupLocation && next.dropoffLocation && /\b(?:and\s+)?back\b|\breturn\b|往返|回程/iu.test(message)) {
+    next.returnPickupLocation = next.dropoffLocation;
+    next.returnDropoffLocation = next.pickupLocation;
+    next.serviceType = "round_trip";
   }
 
   if (!next.pickupLocation && pickupOnly) {
@@ -612,6 +643,7 @@ function mergeTripDetails(
   if (time) {
     next.time = normalizeTime(time[0]);
   }
+  if (returnTime) next.returnTime = normalizeTime(returnTime);
   if (flight) next.flightNumber = flight.toUpperCase().replace(/\s+/, " ");
   if (!flight && !extractedDetails?.flightNumber) {
     next.flightNumber = current.flightNumber;
@@ -619,7 +651,15 @@ function mergeTripDetails(
   }
   if (passengers) next.passengerCount = parseNumberToken(passengers[1]);
   else if (chinesePassengers) next.passengerCount = Number(chinesePassengers[1]);
-  if (luggage) next.luggageCount = parseNumberToken(luggage[1]);
+  if (luggageBreakdown) {
+    const isAdditionalLuggage = /\b(?:more|extra|additional)\b|再|多|额外|額外/u.test(lower);
+    const currentBreakdown = current.luggageBreakdown;
+    const combined = isAdditionalLuggage && currentBreakdown
+      ? addLuggageBreakdowns(currentBreakdown, luggageBreakdown)
+      : luggageBreakdown;
+    next.luggageBreakdown = combined;
+    next.luggageCount = combined.total;
+  } else if (luggage) next.luggageCount = parseNumberToken(luggage[1]);
   else if (chineseLuggage) next.luggageCount = Number(chineseLuggage[1]);
 
   if (lower.includes("van") || lower.includes("minivan") || lower.includes("海狮") || lower.includes("海獅") || lower.includes("hiace")) {
@@ -723,10 +763,19 @@ function hasQuoteRelevantTripChanges(current: TripDetails, next: TripDetails): b
     "flightNumber",
     "passengerCount",
     "luggageCount",
+    "luggageBreakdown",
     "vehiclePreference",
+    "returnPickupLocation",
+    "returnDropoffLocation",
+    "returnTime",
   ];
 
-  return fields.some((field) => current[field] !== next[field]);
+  return fields.some((field) => {
+    if (field === "luggageBreakdown") {
+      return JSON.stringify(current[field]) !== JSON.stringify(next[field]);
+    }
+    return current[field] !== next[field];
+  });
 }
 
 function createBossInboxItems(params: {
@@ -794,13 +843,17 @@ function createAiMessage(params: {
   contact?: CapturedContact;
   detectedEvents: DetectedEvent[];
   missingFields: TripFieldKey[];
+  missingBookingFields: TripFieldKey[];
   quote?: QuoteSuggestion;
   quoteApproved: boolean;
   quoteAutoApproved: boolean;
+  configuration: BusinessConfiguration;
   lang: PromptLang;
   createdAt: string;
 }): ConversationMessage {
   const purchaseIntent = hasPurchaseIntent(params.customerMessage);
+  const eventTypes = new Set(params.detectedEvents.map((event) => event.eventType));
+  const nextBookingField = params.missingBookingFields[0];
   const eventText =
     params.detectedEvents.length > 0
       ? params.lang === "zh"
@@ -809,7 +862,42 @@ function createAiMessage(params: {
       : "";
   let text: string;
 
-  if (params.contact && params.quote) {
+  if (eventTypes.has("Payment Coordination") && hasPaymentIntent(params.customerMessage)) {
+    text = params.lang === "zh"
+      ? "通常在服务完成后现金支付给司机；如需 PayPal，请告诉我。"
+      : "Payment is normally made in cash to the driver after the transfer. PayPal can be arranged separately.";
+  } else if (eventTypes.has("Driver Assignment Needed")) {
+    text = params.lang === "zh"
+      ? "我会在司机确认后发送司机姓名、车辆和联系方式。"
+      : "I will send the driver's name, vehicle and contact details once they are confirmed.";
+  } else if (eventTypes.has("Early Pickup Request") || eventTypes.has("Pickup Time Change")) {
+    text = params.lang === "zh"
+      ? "我先和司机确认新的接送时间，确认后马上回复您。"
+      : "I will check the new pickup time with the driver and reply once it is confirmed.";
+  } else if (eventTypes.has("Round Trip Discount") || eventTypes.has("Multi-leg Itinerary Request")) {
+    text = params.lang === "zh"
+      ? "我会把去程和回程分别记录，并提交车辆和价格安排审核。"
+      : "I will record the outbound and return legs separately and check the vehicle and pricing arrangements.";
+  } else if (eventTypes.has("Discount Request")) {
+    const quoteText = params.quote
+      ? `${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved, autoApproved: params.quoteAutoApproved })} `
+      : "";
+    text = params.lang === "zh"
+      ? `${quoteText}我会为您申请特别现金价格，确认后回复您。${eventText}`
+      : `${quoteText}I will check whether a special cash rate is available and get back to you.${eventText}`;
+  } else if (hasBookingConfirmationIntent(params.customerMessage)) {
+    if (nextBookingField) {
+      text = params.lang === "zh"
+        ? `我已记下您的预订意向。请提供${fieldLabelsZh[nextBookingField]}，我就可以继续安排。`
+        : `I have noted your booking request. Please provide the ${fieldLabels[nextBookingField]} so I can continue.`;
+    } else if (params.quote) {
+      text = params.lang === "zh"
+        ? `我已记下您的确认请求。${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved, autoApproved: params.quoteAutoApproved })}`
+        : `I have noted your booking request. ${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved, autoApproved: params.quoteAutoApproved })}`;
+    } else {
+      text = params.lang === "zh" ? "我已记下您的预订请求，会继续为您安排。" : "I have noted your booking request and will continue arranging it.";
+    }
+  } else if (params.contact && params.quote) {
     text = params.lang === "zh"
       ? `谢谢，已记录您的${params.contact.method}联系方式。${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved, autoApproved: params.quoteAutoApproved })}${eventText}`
       : `Thanks, I have saved your ${params.contact.method}. ${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved, autoApproved: params.quoteAutoApproved })}${eventText}`;
@@ -818,9 +906,14 @@ function createAiMessage(params: {
       ? `谢谢，已记录您的${params.contact.method}联系方式。`
       : `Thanks, I have saved your ${params.contact.method}.`;
   } else if (params.quote) {
+    const followUp = nextBookingField
+      ? params.lang === "zh"
+        ? ` 请提供${fieldLabelsZh[nextBookingField]}。`
+        : ` Please provide the ${fieldLabels[nextBookingField]}.`
+      : "";
     text = params.lang === "zh"
-      ? `${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved, autoApproved: params.quoteAutoApproved })}${eventText}`
-      : formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved, autoApproved: params.quoteAutoApproved }) + eventText;
+      ? `${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved, autoApproved: params.quoteAutoApproved })}${followUp}${eventText}`
+      : `${formatCustomerQuoteNotice(params.lang, params.quote, { approved: params.quoteApproved, autoApproved: params.quoteAutoApproved })}${followUp}${eventText}`;
   } else if (params.missingFields.length > 0) {
     const nextField = params.missingFields[0];
     const contactAsk = purchaseIntent
@@ -874,6 +967,16 @@ function hasPurchaseIntent(message: string): boolean {
     "van",
     "sedan",
   ].some((keyword) => lower.includes(keyword));
+}
+
+function hasPaymentIntent(message: string): boolean {
+  const paymentTerms = /\b(?:pay|payment|paid|paypal|visa|credit card|cash)\b|付款|支付|刷卡|现金|現金/iu;
+  if (/[?？]/u.test(message)) return paymentTerms.test(message);
+  return /\b(?:paypal|visa|credit card)\b|\b(?:i\s+have\s+paid|payment\s+has\s+been\s+completed)\b|已付款|已支付/iu.test(message);
+}
+
+function hasBookingConfirmationIntent(message: string): boolean {
+  return /\b(?:confirm(?: the)? booking|confirm(?: the)? reservation|book it|reserve it|make the booking|schedule both|go ahead|yes,?\s*(?:please\s*)?(?:confirm|book|reserve))\b|(?:确认|確認|预订|預訂|安排预订|安排預訂)/iu.test(message);
 }
 
 function summarizeTrip(tripDetails: TripDetails): string {
@@ -986,6 +1089,50 @@ function looksLikeLocationReply(message: string): boolean {
   );
 }
 
+function extractLuggageBreakdown(message: string): TripDetails["luggageBreakdown"] {
+  const numberPattern = "\\d+|one|two|three|four|five|six|seven|eight|nine|ten";
+  const read = (pattern: RegExp): number | undefined => {
+    const match = message.match(pattern);
+    return match?.[1] ? parseNumberToken(match[1]) : undefined;
+  };
+  const large = read(new RegExp(`\\b(${numberPattern})\\s*(?:pieces?\\s+of\\s+)?(?:large|big)(?:[- ]sized)?\\s*(?:bags?|luggage|suitcases?)?\\b`, "i")) ??
+    read(new RegExp(`(?:大件|大)\\s*(\\d+)|(?:大件|大)\\s*(?:行李)?\\s*(\\d+)`, "iu"));
+  const medium = read(new RegExp(`\\b(${numberPattern})\\s*(?:pieces?\\s+of\\s+)?medium(?:[- ]sized)?\\s*(?:bags?|luggage|suitcases?)?\\b`, "i")) ??
+    read(new RegExp(`(?:中件|中)\\s*(\\d+)|(?:中件|中)\\s*(?:行李)?\\s*(\\d+)`, "iu"));
+  const small = read(new RegExp(`\\b(${numberPattern})\\s*(?:pieces?\\s+of\\s+)?small(?:[- ]sized)?\\s*(?:bags?|luggage|suitcases?)?\\b`, "i")) ??
+    read(new RegExp(`(?:小件|小)\\s*(\\d+)|(?:小件|小)\\s*(?:行李)?\\s*(\\d+)`, "iu"));
+  const carryOn = read(new RegExp(`\\b(${numberPattern})\\s*(?:pieces?\\s+of\\s+)?(?:carry[- ]?on|hand)\\s*(?:bags?|luggage)?\\b`, "i")) ??
+    read(new RegExp(`(?:手提|随身|隨身)\\s*(?:行李)?\\s*(\\d+)`, "iu"));
+  const backpack = read(new RegExp(`\\b(${numberPattern})\\s*(?:pieces?\\s+of\\s+)?backpacks?\\b`, "i")) ??
+    read(new RegExp(`(?:背包)\\s*(\\d+)`, "iu"));
+
+  const values = [large, medium, small, carryOn, backpack].filter((value): value is number => value !== undefined);
+  if (values.length === 0) return undefined;
+
+  return {
+    ...(large === undefined ? {} : { large }),
+    ...(medium === undefined ? {} : { medium }),
+    ...(small === undefined ? {} : { small }),
+    ...(carryOn === undefined ? {} : { carryOn }),
+    ...(backpack === undefined ? {} : { backpack }),
+    total: values.reduce((sum, value) => sum + value, 0),
+  };
+}
+
+function addLuggageBreakdowns(
+  current: NonNullable<TripDetails["luggageBreakdown"]>,
+  added: NonNullable<TripDetails["luggageBreakdown"]>,
+): NonNullable<TripDetails["luggageBreakdown"]> {
+  return {
+    large: (current.large ?? 0) + (added.large ?? 0),
+    medium: (current.medium ?? 0) + (added.medium ?? 0),
+    small: (current.small ?? 0) + (added.small ?? 0),
+    carryOn: (current.carryOn ?? 0) + (added.carryOn ?? 0),
+    backpack: (current.backpack ?? 0) + (added.backpack ?? 0),
+    total: current.total + added.total,
+  };
+}
+
 function cleanText(value: string): string {
   return value
     .trim()
@@ -993,6 +1140,12 @@ function cleanText(value: string): string {
     .replace(/[，。！？,.!?]+$/u, "")
     .replace(/\bthe\b$/i, "")
     .trim();
+}
+
+function cleanRoutePickupLocation(value: string): string {
+  const fromLocation = value.match(/\bfrom\s+(.+)$/i)?.[1];
+  const withoutQuestionPrefix = (fromLocation ?? value).replace(/^(?:hello\s*,?\s*|if\s+|how\s+much\s+is\s+|what(?:'s| is)\s+the\s+price\s+for\s+|please\s+quote\s+)/i, "");
+  return cleanText(withoutQuestionPrefix);
 }
 
 function parseNumberToken(value: string): number {

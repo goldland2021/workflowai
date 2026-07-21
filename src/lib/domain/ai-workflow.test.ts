@@ -39,7 +39,7 @@ const completeTripDetails: TripDetails = {
 describe("getFastFaqReply", () => {
   it("answers configured Chinese policy questions without an LLM call", () => {
     expect(getFastFaqReply("司机可以等待多久？", airportTransferConfiguration)).toBe(
-      "标准等待时间为航班降落后 60 分钟。",
+      "航班实际落地后提供90分钟免费等候。",
     );
   });
 
@@ -71,6 +71,39 @@ describe("getFastFaqReply", () => {
 });
 
 describe("analyzeCustomerTurn - quote suggestion rules", () => {
+  it("provides a quote before pickup time is known", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "Please quote Narita Airport to The Ritz-Carlton Tokyo for 2 passengers with 2 suitcases.",
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.quote?.currency).toBe("JPY");
+    expect(result.quote?.suggestedPrice).toBeGreaterThan(0);
+    expect(result.aiMessage.text).not.toMatch(/drop-off location|下车地点/iu);
+  });
+
+  it("uses server-provided route distance before calculating the quote", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "Please quote Narita Airport to The Ritz-Carlton Tokyo for 2 passengers with 2 suitcases.",
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+      routeEnricher: async (tripDetails) => ({
+        ...tripDetails,
+        routeDistanceKm: 72,
+        estimatedDriveTimeMinutes: 85,
+        tollYen: 3000,
+      }),
+    });
+
+    expect(result.tripDetails.routeDistanceKm).toBe(72);
+    expect(result.tripDetails.estimatedDriveTimeMinutes).toBe(85);
+    expect(result.quote?.suggestedPrice).toBe(21000);
+    expect(result.quoteAutoApproved).toBe(true);
+  });
+
   it("does not suggest a quote while required trip fields are missing", async () => {
     const result = await analyzeCustomerTurn({
       message: "Hi, how much for an airport pickup?",
@@ -123,7 +156,7 @@ describe("analyzeCustomerTurn - quote suggestion rules", () => {
 
     expect(result.quoteAutoApproved).toBe(true);
     expect(result.quote?.currency).toBe("JPY");
-    expect(result.quote?.suggestedPrice).toBe(23000);
+    expect(result.quote?.suggestedPrice).toBe(21000);
     expect(result.bossInboxItems.some((item) => item.type === "quote_approval")).toBe(false);
     expect(result.aiMessage.text).toMatch(/standard rate|标准报价/iu);
     expect(result.aiMessage.text).not.toMatch(/owner confirmation|老板确认/iu);
@@ -151,6 +184,81 @@ describe("analyzeCustomerTurn - quote suggestion rules", () => {
     expect(result.aiMessage.text).toMatch(/老板已确认|owner has confirmed/iu);
     expect(result.aiMessage.text).toContain("USD 78");
     expect(result.bossInboxItems.some((item) => item.type === "quote_approval")).toBe(false);
+  });
+
+  it("handles payment questions without reopening missing trip fields", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "The price is fine. When do I pay?",
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.aiMessage.text).toMatch(/cash|PayPal/i);
+    expect(result.aiMessage.text).not.toMatch(/pickup|drop-off|location/i);
+  });
+
+  it("keeps cash wording inside a quote request instead of switching to payment support", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "Please quote Narita Airport to The Ritz-Carlton Tokyo for 2 passengers. Cash payment is fine.",
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.quote?.currency).toBe("JPY");
+    expect(result.aiMessage.text).toMatch(/JPY|price|报价/iu);
+    expect(result.aiMessage.text).not.toMatch(/Payment is normally made|付款方式/iu);
+  });
+
+  it("extracts a city round trip and separate return time", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "What is the price for 7 people from The Ritz-Carlton, Kyoto to Universal Studios Japan tomorrow morning, and back at 5 PM?",
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails).toMatchObject({
+      serviceType: "round_trip",
+      pickupLocation: "The Ritz-Carlton, Kyoto",
+      dropoffLocation: "Universal Studios Japan",
+      passengerCount: 7,
+      returnPickupLocation: "Universal Studios Japan",
+      returnDropoffLocation: "The Ritz-Carlton, Kyoto",
+      returnTime: "5 PM",
+    });
+    expect(result.quote?.suggestedPrice).toBe(40000);
+  });
+
+  it("keeps luggage categories and recommends vehicles by checked luggage", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "Narita Airport to Yokohama hotel on October 27 for 19 passengers: 19 large suitcases, 19 carry-on bags and 19 backpacks.",
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails.luggageBreakdown).toMatchObject({ large: 19, carryOn: 19, backpack: 19, total: 57 });
+    expect(result.tripDetails.luggageCount).toBe(57);
+    expect(result.quote?.vehicleType).toBe("3 × Toyota HiAce");
+  });
+
+  it("asks only for pickup time when a customer confirms before the booking is complete", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "Yes, please confirm the booking.",
+      currentTripDetails: {
+        pickupLocation: "Narita Airport",
+        dropoffLocation: "The Ritz-Carlton Tokyo",
+        date: "July 21",
+        passengerCount: 2,
+      },
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.aiMessage.text).toMatch(/pickup time|上车时间/iu);
+    expect(result.aiMessage.text).not.toMatch(/drop-off location|下车地点/iu);
   });
 });
 

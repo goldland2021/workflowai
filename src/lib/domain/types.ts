@@ -95,10 +95,20 @@ export interface PricingFixedRoute {
   pricesByAirport: Record<string, number>;
 }
 
+export interface PricingCityRoute {
+  id: string;
+  label: string;
+  pickupKeywords: string[];
+  dropoffKeywords: string[];
+  oneWayYen: number;
+  roundTripYen?: number;
+}
+
 export interface PricingPolicy {
   engineVersion: string;
   currency: string;
   cityRateYenPerKm: number;
+  cityTransferMinimumYen?: number;
   priceBufferYen: number;
   hiaceSurchargeYen: number;
   standardTollAllowanceYen: number;
@@ -106,6 +116,7 @@ export interface PricingPolicy {
   autoQuoteMinConfidence: number;
   airports: Record<string, PricingAirportRule>;
   fixedRoutes: PricingFixedRoute[];
+  cityRoutes?: PricingCityRoute[];
   interAirportFares: Record<string, number>;
 }
 
@@ -179,12 +190,25 @@ export interface TripDetails {
   flightTime?: string;
   passengerCount?: number;
   luggageCount?: number;
+  luggageBreakdown?: LuggageBreakdown;
   vehiclePreference?: string;
+  returnPickupLocation?: string;
+  returnDropoffLocation?: string;
+  returnTime?: string;
   routeDistanceKm?: number;
   tollYen?: number;
   estimatedDriveTimeMinutes?: number;
   specialRequests?: string[];
   flightArrival?: FlightArrivalDetails;
+}
+
+export interface LuggageBreakdown {
+  large?: number;
+  medium?: number;
+  small?: number;
+  carryOn?: number;
+  backpack?: number;
+  total: number;
 }
 
 export interface FlightArrivalDetails {

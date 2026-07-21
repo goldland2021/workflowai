@@ -116,11 +116,23 @@ const PricingFixedRouteSchema = z
   })
   .strict();
 
+const PricingCityRouteSchema = z
+  .object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    pickupKeywords: z.array(z.string().min(1)),
+    dropoffKeywords: z.array(z.string().min(1)),
+    oneWayYen: numberFromInput(z.number().nonnegative()),
+    roundTripYen: numberFromInput(z.number().nonnegative()).optional(),
+  })
+  .strict();
+
 export const PricingPolicySchema = z
   .object({
     engineVersion: z.string().min(1),
     currency: z.string().min(1),
     cityRateYenPerKm: numberFromInput(z.number().nonnegative()),
+    cityTransferMinimumYen: numberFromInput(z.number().nonnegative()).optional(),
     priceBufferYen: numberFromInput(z.number().nonnegative()),
     hiaceSurchargeYen: numberFromInput(z.number().nonnegative()),
     standardTollAllowanceYen: numberFromInput(z.number().nonnegative()),
@@ -128,6 +140,7 @@ export const PricingPolicySchema = z
     autoQuoteMinConfidence: numberFromInput(z.number().min(0).max(100)),
     airports: z.record(z.string(), PricingAirportRuleSchema),
     fixedRoutes: z.array(PricingFixedRouteSchema),
+    cityRoutes: z.array(PricingCityRouteSchema).optional(),
     interAirportFares: z.record(z.string(), numberFromInput(z.number().nonnegative())),
   })
   .strict();

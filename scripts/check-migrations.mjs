@@ -17,6 +17,7 @@ const requiredMigrations = [
   "011_structured_memory_and_learning.sql",
   "012_flight_arrival_details.sql",
   "013_pricing_snapshots.sql",
+  "014_jpairport_pricing_configuration.sql",
 ];
 
 const files = (await readdir(migrationsDirectory)).filter((file) => file.endsWith(".sql"));
@@ -44,6 +45,7 @@ const migration010 = await readFile(resolve(migrationsDirectory, requiredMigrati
 const migration011 = await readFile(resolve(migrationsDirectory, requiredMigrations[10]), "utf8");
 const migration012 = await readFile(resolve(migrationsDirectory, requiredMigrations[11]), "utf8");
 const migration013 = await readFile(resolve(migrationsDirectory, requiredMigrations[12]), "utf8");
+const migration014 = await readFile(resolve(migrationsDirectory, requiredMigrations[13]), "utf8");
 if (!migration007.includes("customer_language")) {
   throw new Error("Migration 007 does not contain customer_language support.");
 }
@@ -64,6 +66,9 @@ if (!migration012.includes("flight_arrival")) {
 }
 if (!migration013.includes("pricing_snapshot")) {
   throw new Error("Migration 013 is missing pricing snapshot storage.");
+}
+if (!migration014.includes("company_jpairport") || !migration014.includes("workflowai-pricing-v2")) {
+  throw new Error("Migration 014 is missing the live JP VIP pricing configuration.");
 }
 
 if (process.env.CHECK_LIVE_DB === "true") {

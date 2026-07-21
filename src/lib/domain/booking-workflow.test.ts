@@ -1,21 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { createBookingSummary, getMissingQuoteFields } from "./booking-workflow";
+import { createBookingSummary, getMissingBookingFields, getMissingQuoteFields } from "./booking-workflow";
 import type { QuoteSuggestion, TripDetails } from "./types";
 
 describe("getMissingQuoteFields", () => {
-  it("lists every required field when trip details are empty", () => {
+  it("lists the minimum fields needed to calculate a quote", () => {
     expect(getMissingQuoteFields({})).toEqual([
       "pickupLocation",
       "dropoffLocation",
-      "date",
-      "time",
       "passengerCount",
     ]);
   });
 
   it("only lists the fields that are still missing", () => {
     const partial: TripDetails = { pickupLocation: "Airport", date: "Tomorrow" };
-    expect(getMissingQuoteFields(partial)).toEqual(["dropoffLocation", "time", "passengerCount"]);
+    expect(getMissingQuoteFields(partial)).toEqual(["dropoffLocation", "passengerCount"]);
   });
 
   it("lists nothing once every required field is present", () => {
@@ -27,6 +25,12 @@ describe("getMissingQuoteFields", () => {
       passengerCount: 2,
     };
     expect(getMissingQuoteFields(complete)).toEqual([]);
+  });
+
+  it("keeps pickup time as a booking field instead of blocking a quote", () => {
+    expect(getMissingQuoteFields({ pickupLocation: "Airport", dropoffLocation: "Hotel", passengerCount: 2 })).toEqual([]);
+    expect(getMissingBookingFields({ pickupLocation: "Airport", dropoffLocation: "Hotel", passengerCount: 2 })).toEqual(["date", "time"]);
+    expect(getMissingBookingFields({ pickupLocation: "Airport", dropoffLocation: "Hotel", passengerCount: 2, flightTime: "15:05" })).toEqual(["date"]);
   });
 });
 

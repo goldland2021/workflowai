@@ -11,12 +11,12 @@ import { DEFAULT_PRICING_POLICY } from "./pricing";
 
 export const airportTransferConfiguration: BusinessConfiguration = {
   companyProfile: {
-    id: "company_skybridge",
-    name: "天桥机场接送",
+    id: "company_jpairport",
+    name: "JP VIP Charter",
     industry: "airport_transfer",
-    serviceArea: "市中心、郊区及国际机场路线",
-    languages: ["英语", "中文", "马来语"],
-    paymentMethods: ["现金", "银行转账", "到付刷卡"],
+    serviceArea: "Tokyo, Yokohama, Kyoto, Osaka and major airports in Japan",
+    languages: ["English", "中文"],
+    paymentMethods: ["Cash to the driver after service", "PayPal by arrangement"],
   },
   services: [
     {
@@ -56,22 +56,22 @@ export const airportTransferConfiguration: BusinessConfiguration = {
       id: "price_standard_airport",
       label: "Standard airport route",
       description: "Base sedan transfer for normal city-to-airport routes.",
-      basePrice: 78,
-      currency: "USD",
+       basePrice: 21000,
+       currency: "JPY",
     },
     {
       id: "price_van_airport",
       label: "Van airport route",
       description: "Larger vehicle for families, groups, or extra luggage.",
-      basePrice: 118,
-      currency: "USD",
+       basePrice: 31000,
+       currency: "JPY",
     },
     {
       id: "price_day_tour",
       label: "Private day tour",
       description: "Up to 10 hours with a private vehicle and driver.",
-      basePrice: 420,
-      currency: "USD",
+       basePrice: 42000,
+       currency: "JPY",
     },
   ],
   escalationRules: [
@@ -161,12 +161,12 @@ export const airportTransferConfiguration: BusinessConfiguration = {
     {
       id: "faq_waiting",
       question: "司机可以等待多长时间？",
-      answer: "标准等待时间为航班降落后 60 分钟。",
+      answer: "航班实际落地后提供90分钟免费等候。",
     },
     {
       id: "faq_payment",
       question: "客户如何支付？",
-      answer: "客户可通过现金、银行转账或到付刷卡支付。",
+      answer: "通常在服务完成后现金支付给司机，也可另行安排 PayPal。",
     },
     {
       id: "faq_child_seat",
@@ -185,26 +185,54 @@ export const airportTransferConfiguration: BusinessConfiguration = {
   vehicles: [
     {
       id: "vehicle_alphard",
-      name: "丰田阿尔法",
+     name: "Toyota Alphard",
       type: "Alphard",
       capacity: {
         passengers: 6,
         luggage: 4,
       },
-      description: "高端舒适MPV，空间宽敞，适合家庭或3-6人商务乘客，乘坐体验好。",
+     description: "Comfortable premium MPV for up to 6 passengers.",
     },
     {
       id: "vehicle_hiace",
-      name: "丰田海狮",
+     name: "Toyota HiAce",
       type: "HiAce",
       capacity: {
         passengers: 8,
-        luggage: 6,
+        luggage: 12,
       },
-      description: "大型商务车，行李空间充足，适合多人出行或携带较多行李。",
+     description: "Spacious van for groups and additional luggage.",
     },
   ],
 };
+
+function isLegacyDemoConfiguration(config: BusinessConfiguration): boolean {
+  const currencies = config.pricingRules.map((rule) => rule.currency.toUpperCase());
+  return config.companyProfile.id === "company_skybridge" ||
+    (currencies.length > 0 && currencies.every((currency) => currency === "USD") && !config.pricingPolicy);
+}
+
+/**
+ * The first production seed used a generic USD demo profile. Keep that seed
+ * from leaking into customer replies until the database row is migrated.
+ */
+export function normalizeBusinessConfiguration(config: BusinessConfiguration): BusinessConfiguration {
+  if (isLegacyDemoConfiguration(config)) {
+    return {
+      ...airportTransferConfiguration,
+      companyProfile: {
+        ...airportTransferConfiguration.companyProfile,
+        id: config.companyProfile.id,
+      },
+    };
+  }
+
+  return {
+    ...config,
+    pricingPolicy: config.pricingPolicy ?? DEFAULT_PRICING_POLICY,
+    vehicles: config.vehicles?.length ? config.vehicles : airportTransferConfiguration.vehicles,
+  };
+}
 
 const initialTripDetails: TripDetails = {
   serviceType: "airport_pickup",

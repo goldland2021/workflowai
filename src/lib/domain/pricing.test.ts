@@ -16,8 +16,8 @@ describe("WorkflowAI pricing engine", () => {
       airportTransferConfiguration,
     );
 
-    expect(result?.priceYen).toBe(23000);
-    expect(result?.vehicleType).toBe("丰田阿尔法");
+    expect(result?.priceYen).toBe(21000);
+    expect(result?.vehicleType).toBe("Toyota Alphard");
     expect(result?.pricing.source).toBe("distance_formula");
     expect(result?.pricing.approvalRequired).toBe(false);
     expect(result?.pricing.confidenceBand).toBe("high");
@@ -37,8 +37,8 @@ describe("WorkflowAI pricing engine", () => {
       airportTransferConfiguration,
     );
 
-    expect(result?.vehicleType).toBe("丰田海狮");
-    expect(result?.priceYen).toBe(34000);
+    expect(result?.vehicleType).toBe("Toyota HiAce");
+    expect(result?.priceYen).toBe(31000);
     expect(result?.pricing.approvalRequired).toBe(false);
   });
 

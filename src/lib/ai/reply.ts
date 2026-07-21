@@ -60,17 +60,72 @@ function quoteAmountAppears(text: string, quote: QuoteSuggestion): boolean {
 }
 
 function fallbackReply(params: {
+  customerMessage: string;
   lang: PromptLang;
   contact?: CapturedContact;
+  detectedEvents: DetectedEvent[];
   quote?: QuoteSuggestion;
   quoteApproved: boolean;
   quoteAutoApproved: boolean;
   missingFields: TripFieldKey[];
+  missingBookingFields: TripFieldKey[];
 }): string {
-  const { lang, contact, quote, quoteApproved, quoteAutoApproved, missingFields } = params;
+  const { customerMessage, lang, contact, detectedEvents, quote, quoteApproved, quoteAutoApproved, missingFields, missingBookingFields } = params;
+  const eventTypes = new Set(detectedEvents.map((event) => event.eventType));
+  const nextBookingField = missingBookingFields[0];
+  const paymentTerms = /\b(?:pay|payment|paid|paypal|visa|credit card|cash)\b|付款|支付|刷卡|现金|現金/iu;
+  const paymentIntent = /[?？]/u.test(customerMessage)
+    ? paymentTerms.test(customerMessage)
+    : /\b(?:paypal|visa|credit card)\b|\b(?:i\s+have\s+paid|payment\s+has\s+been\s+completed)\b|已付款|已支付/iu.test(customerMessage);
+  const confirmationIntent = /\b(?:confirm(?: the)? booking|confirm(?: the)? reservation|book it|reserve it|make the booking|schedule both|go ahead|yes,?\s*(?:please\s*)?(?:confirm|book|reserve))\b|(?:确认|確認|预订|預訂|安排预订|安排預訂)/iu.test(customerMessage);
+
+  if (eventTypes.has("Payment Coordination") && paymentIntent) {
+    if (lang === "zh") return "通常在服务完成后现金支付给司机；如需 PayPal，请告诉我。";
+    if (lang === "ar") return "عادةً يتم الدفع نقدًا للسائق بعد انتهاء الرحلة. يمكن ترتيب PayPal بشكل منفصل.";
+    return "Payment is normally made in cash to the driver after the transfer. PayPal can be arranged separately.";
+  }
+  if (eventTypes.has("Driver Assignment Needed")) {
+    return lang === "zh"
+      ? "我会在司机确认后发送司机姓名、车辆和联系方式。"
+      : lang === "ar"
+        ? "سأرسل اسم السائق والسيارة وبيانات الاتصال بعد تأكيدها."
+        : "I will send the driver's name, vehicle and contact details once they are confirmed.";
+  }
+  if (eventTypes.has("Early Pickup Request") || eventTypes.has("Pickup Time Change")) {
+    return lang === "zh"
+      ? "我先和司机确认新的接送时间，确认后马上回复您。"
+      : lang === "ar"
+        ? "سأتحقق من وقت الاستلام الجديد مع السائق وأرد عليك بعد التأكيد."
+        : "I will check the new pickup time with the driver and reply once it is confirmed.";
+  }
+  if (eventTypes.has("Round Trip Discount") || eventTypes.has("Multi-leg Itinerary Request")) {
+    return lang === "zh"
+      ? "我会把去程和回程分别记录，并确认车辆和价格安排。"
+      : lang === "ar"
+        ? "سأسجل رحلتي الذهاب والعودة بشكل منفصل وأتحقق من السيارة والسعر."
+        : "I will record the outbound and return legs separately and check the vehicle and pricing arrangements.";
+  }
+  if (eventTypes.has("Discount Request")) {
+    const quoteText = quote ? `${formatCustomerQuoteNotice(lang, quote, { approved: quoteApproved, autoApproved: quoteAutoApproved })} ` : "";
+    return lang === "zh"
+      ? `${quoteText}我会为您申请特别现金价格，确认后回复您。`
+      : `${quoteText}I will check whether a special cash rate is available and get back to you.`;
+  }
+  if (confirmationIntent) {
+    if (nextBookingField) {
+      const label = lang === "zh" ? fieldLabelZh(nextBookingField) : nextBookingField.replace(/([A-Z])/g, " $1").toLowerCase();
+      return lang === "zh"
+        ? `我已记下您的预订意向。请提供${label}，我就可以继续安排。`
+        : `I have noted your booking request. Please provide the ${label} so I can continue.`;
+    }
+    if (quote) return `${lang === "zh" ? "我已记下您的预订请求。" : "I have noted your booking request. "}${formatCustomerQuoteNotice(lang, quote, { approved: quoteApproved, autoApproved: quoteAutoApproved })}`;
+    return lang === "zh" ? "我已记下您的预订请求，会继续为您安排。" : "I have noted your booking request and will continue arranging it.";
+  }
+
   if (lang === 'ar') {
     if (contact && quote) return `شكرًا، تم تسجيل ${contact.method}. ${formatCustomerQuoteNotice(lang, quote, { approved: quoteApproved, autoApproved: quoteAutoApproved })}`;
     if (contact) return `شكرًا، تم تسجيل ${contact.method}. سأجهز اقتراح الرحلة للمالك.`;
+    if (quote && nextBookingField) return `${formatCustomerQuoteNotice(lang, quote, { approved: quoteApproved, autoApproved: quoteAutoApproved })} يرجى تزويدي بتفاصيل ${nextBookingField}.`;
     if (quote) return `${formatCustomerQuoteNotice(lang, quote, { approved: quoteApproved, autoApproved: quoteAutoApproved })} ما أفضل رقم واتساب أو بريد إلكتروني للمتابعة؟`;
     if (missingFields.length > 0) return `شكرًا. يرجى تزويدي بتفاصيل ${missingFields[0]}.`;
     return `شكرًا لمعلوماتك. سنتابع الخطوة التالية معك.`;
@@ -78,12 +133,14 @@ function fallbackReply(params: {
   if (lang === 'en') {
     if (contact && quote) return `Thanks, I have saved your ${contact.method}. ${formatCustomerQuoteNotice(lang, quote, { approved: quoteApproved, autoApproved: quoteAutoApproved })}`;
     if (contact) return `Thanks, I have saved your ${contact.method}. I will prepare the quote suggestion for the owner.`;
+    if (quote && nextBookingField) return `${formatCustomerQuoteNotice(lang, quote, { approved: quoteApproved, autoApproved: quoteAutoApproved })} Please provide the ${nextBookingField.replace(/([A-Z])/g, " $1").toLowerCase()}.`;
     if (quote) return `${formatCustomerQuoteNotice(lang, quote, { approved: quoteApproved, autoApproved: quoteAutoApproved })} What is the best WhatsApp, Telegram, or email for updates?`;
     if (missingFields.length > 0) return `Thanks. Please provide the ${missingFields[0]} details.`;
     return `Thank you. I will prepare the next step for the owner.`;
   }
   if (contact && quote) return `谢谢，已记录您的${contact.method}联系方式。${formatCustomerQuoteNotice(lang, quote, { approved: quoteApproved, autoApproved: quoteAutoApproved })}`;
   if (contact) return `已记录您的${contact.method}，我会为老板准备报价建议。`;
+  if (quote && nextBookingField) return `${formatCustomerQuoteNotice(lang, quote, { approved: quoteApproved, autoApproved: quoteAutoApproved })} 请提供${fieldLabelZh(nextBookingField)}。`;
   if (quote) return `${formatCustomerQuoteNotice(lang, quote, { approved: quoteApproved, autoApproved: quoteAutoApproved })} 方便提供 WhatsApp、Telegram 或邮箱接收更新吗？`;
   if (missingFields.length > 0) return `好的，请提供${missingFields[0]}相关信息。`;
   return `谢谢您的信息，我们会继续跟进。`;
@@ -98,12 +155,13 @@ export async function generateAiReplyWithAI(params: {
   quote?: QuoteSuggestion;
   quoteApproved: boolean;
   quoteAutoApproved: boolean;
+  missingBookingFields: TripFieldKey[];
   configuration?: BusinessConfiguration;
   recentMessages?: ConversationMessage[];
   customerLanguage?: PromptLang;
 }): Promise<string> {
   const {
-    customerMessage, tripDetails, contact, missingFields, quote, quoteApproved, quoteAutoApproved,
+    customerMessage, tripDetails, contact, missingFields, quote, quoteApproved, quoteAutoApproved, missingBookingFields,
     configuration, recentMessages, customerLanguage
   } = params;
 
@@ -151,6 +209,7 @@ export async function generateAiReplyWithAI(params: {
     customerMessage,
     tripJson: JSON.stringify(tripDetails, null, 2),
     missingFields: missingFields.join(', ') || (lang === 'zh' ? '无' : 'none'),
+    bookingMissingFields: missingBookingFields.join(', ') || (lang === 'zh' ? '无' : 'none'),
     contactInfo: contact ? `${contact.method} [redacted]` : '',
     quoteSummary: quote
       ? `${quote.currency} ${quote.suggestedPrice.toLocaleString("en-US")}${quote.vehicleType ? `, ${quoteApproved || quoteAutoApproved ? "arranged" : "recommended"} vehicle: ${quote.vehicleType}` : ""}`
@@ -163,7 +222,7 @@ export async function generateAiReplyWithAI(params: {
     const generated = await generateReply(prompt, system, temperature);
     if (replyLanguageMatches(generated, lang)) {
       if (quoteApproved && quote && /owner|confirm|provisional|preliminary|pending|老板|确认|初步|参考|等待|待定/iu.test(generated)) {
-        return fallbackReply({ lang, contact, quote, quoteApproved, quoteAutoApproved, missingFields });
+        return fallbackReply({ customerMessage, lang, contact, detectedEvents: params.detectedEvents, quote, quoteApproved, quoteAutoApproved, missingFields, missingBookingFields });
       }
       if (!quote || quoteAmountAppears(generated, quote)) return generated;
       return `${generated.trim()}\n\n${formatCustomerQuoteNotice(lang, quote, { approved: quoteApproved, autoApproved: quoteAutoApproved })}`;
@@ -173,5 +232,16 @@ export async function generateAiReplyWithAI(params: {
     console.warn('LLM reply generation failed, using fallback');
   }
 
-  return fallbackReply({ lang, contact, quote, quoteApproved, quoteAutoApproved, missingFields });
+  return fallbackReply({ customerMessage, lang, contact, detectedEvents: params.detectedEvents, quote, quoteApproved, quoteAutoApproved, missingFields, missingBookingFields });
+}
+
+function fieldLabelZh(field: TripFieldKey): string {
+  const labels: Partial<Record<TripFieldKey, string>> = {
+    date: "行程日期",
+    time: "上车时间",
+    pickupLocation: "上车地点",
+    dropoffLocation: "下车地点",
+    passengerCount: "乘客人数",
+  };
+  return labels[field] ?? field;
 }

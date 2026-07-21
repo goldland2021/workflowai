@@ -11,13 +11,24 @@ import { buildBookingConfirmationText } from "./booking-confirmation";
 const quoteRequiredFields: TripFieldKey[] = [
   "pickupLocation",
   "dropoffLocation",
+  "passengerCount",
+];
+
+const bookingRequiredFields: TripFieldKey[] = [
+  ...quoteRequiredFields,
   "date",
   "time",
-  "passengerCount",
 ];
 
 export function getMissingQuoteFields(tripDetails: TripDetails): TripFieldKey[] {
   return quoteRequiredFields.filter((field) => !tripDetails[field]);
+}
+
+export function getMissingBookingFields(tripDetails: TripDetails): TripFieldKey[] {
+  return bookingRequiredFields.filter((field) => {
+    if (field === "time") return !tripDetails.time && !tripDetails.flightTime;
+    return !tripDetails[field];
+  });
 }
 
 export function createBookingSummary(params: {
