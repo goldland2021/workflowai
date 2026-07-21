@@ -8,11 +8,20 @@ import type {
   ConversationMessage,
   DriverDetails,
   EventType,
+  FlightArrivalDetails,
   QuoteSuggestion,
   ReceiptRequest,
   TripDetails,
   WorkspaceWorkflowRecord,
 } from "@/lib/domain/types";
+import {
+  applyMemoryToTripDetails,
+  getChangedTripFields,
+  tripDetailsToMemoryFacts,
+  tripMemoryKey,
+  type ConversationMemoryFact,
+  type MemorySource,
+} from "@/lib/domain/memory";
 
 type RequestIdempotencyRow = {
   id: string;
@@ -417,6 +426,203 @@ export async function getAiFailures(companyId: string, limit = 20): Promise<AiFa
   return (await res.json()) as AiFailureRow[];
 }
 
+// ─── Structured conversation memory ───
+
+export type ConversationMemoryRow = {
+  id: string;
+  company_id: string;
+  conversation_id: string;
+  booking_id: string | null;
+  fact_key: string;
+  fact_value: unknown;
+  source: MemorySource;
+  confidence: number;
+  confirmed: boolean;
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function getConversationMemory(
+  conversationId: string,
+  companyId: string,
+): Promise<ConversationMemoryFact[]> {
+  const response = await supabaseFetch(
+    `/rest/v1/conversation_memory?conversation_id=eq.${encodeURIComponent(conversationId)}&company_id=eq.${encodeURIComponent(companyId)}&order=updated_at.desc&limit=100`,
+  );
+  const rows = (await response.json()) as ConversationMemoryRow[];
+  const now = Date.now();
+  return rows
+    .filter((row) => !row.expires_at || Date.parse(row.expires_at) > now)
+    .map((row) => ({
+      key: row.fact_key,
+      value: row.fact_value,
+      source: row.source,
+      confidence: row.confidence,
+      confirmed: row.confirmed,
+    }));
+}
+
+export function mergeConversationMemory(
+  current: TripDetails,
+  memory: ConversationMemoryFact[],
+): TripDetails {
+  return applyMemoryToTripDetails(current, memory);
+}
+
+export async function syncConversationMemory(params: {
+  companyId: string;
+  conversationId: string;
+  bookingId?: string;
+  tripDetails: TripDetails;
+  previousTripDetails?: TripDetails;
+  source?: MemorySource;
+}): Promise<void> {
+  const source = params.source ?? "customer";
+  const changedFields = params.previousTripDetails
+    ? getChangedTripFields(params.previousTripDetails, params.tripDetails)
+    : Object.keys(params.tripDetails) as Array<keyof TripDetails>;
+  const changedKeys = new Set(changedFields.map(tripMemoryKey));
+  const facts = tripDetailsToMemoryFacts(params.tripDetails, source)
+    .filter((fact) => changedKeys.has(fact.key));
+
+  await Promise.all(facts.map((fact) =>
+    supabaseFetch("/rest/v1/conversation_memory?on_conflict=company_id,conversation_id,fact_key", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify({
+        company_id: params.companyId,
+        conversation_id: params.conversationId,
+        booking_id: params.bookingId,
+        fact_key: fact.key,
+        fact_value: fact.value,
+        source: fact.source,
+        confidence: fact.confidence,
+        confirmed: fact.confirmed,
+        updated_at: new Date().toISOString(),
+      }),
+    }),
+  ));
+}
+
+// ─── Booking timeline and learning cases ───
+
+export async function recordBookingEvent(params: {
+  companyId: string;
+  bookingId: string;
+  conversationId?: string;
+  eventType: string;
+  statusFrom?: string;
+  statusTo?: string;
+  actorType?: "owner" | "system" | "customer";
+  idempotencyKey?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  await supabaseFetch("/rest/v1/booking_events?on_conflict=company_id,idempotency_key", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Prefer: "resolution=ignore-duplicates,return=minimal",
+    },
+    body: JSON.stringify({
+      company_id: params.companyId,
+      booking_id: params.bookingId,
+      conversation_id: params.conversationId,
+      event_type: params.eventType,
+      status_from: params.statusFrom,
+      status_to: params.statusTo,
+      actor_type: params.actorType ?? "system",
+      idempotency_key: params.idempotencyKey,
+      metadata: params.metadata ?? {},
+    }),
+  });
+}
+
+export type LearningCaseRow = {
+  id: string;
+  company_id: string;
+  conversation_id: string | null;
+  booking_id: string | null;
+  source_type: string;
+  source_id: string;
+  outcome: "approved" | "edited" | "rejected";
+  review_status: "candidate" | "accepted" | "dismissed";
+  reason_code: string;
+  safe_context: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function createLearningCase(params: {
+  companyId: string;
+  conversationId?: string;
+  bookingId?: string;
+  sourceType: string;
+  sourceId: string;
+  outcome: "approved" | "edited" | "rejected";
+  reasonCode: string;
+  safeContext?: Record<string, unknown>;
+}): Promise<void> {
+  await supabaseFetch("/rest/v1/learning_cases?on_conflict=company_id,source_type,source_id,outcome", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Prefer: "resolution=ignore-duplicates,return=minimal",
+    },
+    body: JSON.stringify({
+      company_id: params.companyId,
+      conversation_id: params.conversationId,
+      booking_id: params.bookingId,
+      source_type: params.sourceType,
+      source_id: params.sourceId,
+      outcome: params.outcome,
+      reason_code: params.reasonCode,
+      safe_context: params.safeContext ?? {},
+    }),
+  });
+}
+
+export async function getLearningCases(
+  companyId: string,
+  limit = 50,
+): Promise<LearningCaseRow[]> {
+  const safeLimit = Math.max(1, Math.min(limit, 200));
+  const response = await supabaseFetch(
+    `/rest/v1/learning_cases?company_id=eq.${encodeURIComponent(companyId)}&order=created_at.desc&limit=${safeLimit}`,
+  );
+  return (await response.json()) as LearningCaseRow[];
+}
+
+export async function updateLearningCaseReviewStatus(params: {
+  id: string;
+  companyId: string;
+  reviewStatus: "candidate" | "accepted" | "dismissed";
+}): Promise<void> {
+  await supabaseFetch(
+    `/rest/v1/learning_cases?id=eq.${encodeURIComponent(params.id)}&company_id=eq.${encodeURIComponent(params.companyId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({
+        review_status: params.reviewStatus,
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
+
+  await recordAuditEvent({
+    companyId: params.companyId,
+    actorType: "owner",
+    action: "learning_case.review_status_changed",
+    entityType: "learning_case",
+    entityId: params.id,
+    metadata: { reviewStatus: params.reviewStatus },
+  }).catch(() => console.warn("Failed to record learning case audit event"));
+}
+
 // ─── Bookings ───
 
 export type BookingRow = {
@@ -432,6 +638,7 @@ export type BookingRow = {
   time: string | null;
   flight_number: string | null;
   flight_time: string | null;
+  flight_arrival: FlightArrivalDetails | null;
   passenger_count: number | null;
   luggage_count: number | null;
   vehicle_preference: string | null;
@@ -532,6 +739,7 @@ export async function upsertBooking(
     special_requests: tripDetails.specialRequests,
     route_distance_km: tripDetails.routeDistanceKm,
     estimated_drive_time_min: tripDetails.estimatedDriveTimeMinutes,
+    flight_arrival: tripDetails.flightArrival,
   };
 
   if (existingBookingId) {
@@ -670,6 +878,7 @@ export function bookingRowToTripDetails(booking: BookingRow): TripDetails {
     time: booking.time ?? undefined,
     flightNumber: booking.flight_number ?? undefined,
     flightTime: booking.flight_time ?? undefined,
+    flightArrival: booking.flight_arrival ?? undefined,
     passengerCount: booking.passenger_count ?? undefined,
     luggageCount: booking.luggage_count ?? undefined,
     vehiclePreference: booking.vehicle_preference ?? undefined,
@@ -858,6 +1067,9 @@ export async function updateBossInboxStatus(
     throw new Error("Approved Boss Inbox item requires a quote.");
   }
 
+  const existingBeforeUpdate = await getBossInboxItemById(id, companyId);
+  if (!existingBeforeUpdate) throw new Error("Boss Inbox item not found.");
+
   const updateResponse = await supabaseFetch(
     `/rest/v1/boss_inbox?id=eq.${encodeURIComponent(id)}&company_id=eq.${encodeURIComponent(companyId)}&status=eq.pending`,
     {
@@ -884,6 +1096,45 @@ export async function updateBossInboxStatus(
     entityId: id,
     metadata: { status },
   }).catch(() => console.warn("Failed to record Boss Inbox audit event"));
+
+  await createLearningCase({
+    companyId,
+    conversationId: existingBeforeUpdate.conversation_id ?? undefined,
+    bookingId: existingBeforeUpdate.booking_id ?? undefined,
+    sourceType: "boss_inbox",
+    sourceId: id,
+    outcome: status,
+    reasonCode: status === "approved"
+      ? "owner_approved_quote"
+      : status === "edited"
+        ? "owner_edited_quote"
+        : "owner_rejected_decision",
+    safeContext: {
+      decisionType: existingBeforeUpdate.decision_type ?? existingBeforeUpdate.type,
+      eventType: existingBeforeUpdate.event_type,
+      suggestedPrice: existingBeforeUpdate.suggested_price,
+      finalPrice: quote?.suggestedPrice ?? existingBeforeUpdate.suggested_price,
+      currency: quote?.currency ?? existingBeforeUpdate.currency,
+      vehicleType: quote?.vehicleType ?? existingBeforeUpdate.vehicle_type,
+    },
+  }).catch(() => console.warn("Failed to record learning case"));
+
+  if (existingBeforeUpdate.booking_id) {
+    await recordBookingEvent({
+      companyId,
+      bookingId: existingBeforeUpdate.booking_id,
+      conversationId: existingBeforeUpdate.conversation_id ?? undefined,
+      eventType: "quote_decision_recorded",
+      actorType: "owner",
+      idempotencyKey: `quote-decision:${id}:${status}`,
+      metadata: {
+        status,
+        suggestedPrice: existingBeforeUpdate.suggested_price,
+        finalPrice: quote?.suggestedPrice ?? existingBeforeUpdate.suggested_price,
+        currency: quote?.currency ?? existingBeforeUpdate.currency,
+      },
+    }).catch(() => console.warn("Failed to record quote decision event"));
+  }
 
   if (status !== "approved") return;
 
@@ -923,6 +1174,22 @@ export async function updateBossInboxStatus(
       }),
     },
   );
+
+  await recordBookingEvent({
+    companyId,
+    bookingId: booking.id,
+    conversationId: booking.conversation_id ?? undefined,
+    eventType: "quote_approved",
+    actorType: "owner",
+    statusFrom: booking.status ?? "draft",
+    statusTo: "ready",
+    idempotencyKey: `quote-approved:${id}`,
+    metadata: {
+      currency: quote.currency,
+      approvedPrice: quote.suggestedPrice,
+      vehicleType: quote.vehicleType,
+    },
+  }).catch(() => console.warn("Failed to record quote approval event"));
 
   await recordAuditEvent({
     companyId,
@@ -983,6 +1250,20 @@ export async function updateBookingFulfillment(params: {
       }),
     },
   );
+
+  await recordBookingEvent({
+    companyId: params.companyId,
+    bookingId: booking.id,
+    conversationId: booking.conversation_id ?? undefined,
+    eventType: "fulfillment_updated",
+    actorType: "owner",
+    idempotencyKey: `fulfillment:${booking.id}:${JSON.stringify({ driver, paymentMethod, receipt })}`,
+    metadata: {
+      hasDriverDetails: Boolean(driver),
+      hasPaymentMethod: Boolean(paymentMethod),
+      receiptRequested: receipt.needed,
+    },
+  }).catch(() => console.warn("Failed to record fulfillment event"));
 
   await recordAuditEvent({
     companyId: params.companyId,
@@ -1047,6 +1328,18 @@ export async function recordBookingConfirmationSent(params: {
     createdAt: new Date().toISOString(),
     channel: "website_widget",
   }, `booking-confirmation:${booking.id}`);
+
+  await recordBookingEvent({
+    companyId: params.companyId,
+    bookingId: booking.id,
+    conversationId: booking.conversation_id,
+    eventType: "customer_confirmation_recorded",
+    actorType: "owner",
+    idempotencyKey: `booking-confirmation:${booking.id}`,
+    statusFrom: booking.status ?? "draft",
+    statusTo: "ready",
+    metadata: { messageIdempotencyKey: `booking-confirmation:${booking.id}` },
+  }).catch(() => console.warn("Failed to record booking confirmation event"));
 
   await recordAuditEvent({
     companyId: params.companyId,

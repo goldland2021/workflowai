@@ -22,6 +22,7 @@ import { formatCustomerQuoteNotice, generateAiReplyWithAI } from "../ai/reply";
 import { hasRealAI } from "../ai";
 import { redactContactDetails } from "../ai/pii";
 import { resolveConversationLang, type PromptLang } from "../ai/prompts/templates";
+import { formatFlightArrivalDetails } from "../flight/arrival";
 
 const eventKeywords: Array<{
   type: EventType;
@@ -233,6 +234,21 @@ export async function analyzeCustomerTurn(params: {
       bossInboxItems: [],
     };
   }
+  const fastFlightArrivalReply = getFastFlightArrivalReply(params.message, params.currentTripDetails, lang);
+  if (fastFlightArrivalReply) {
+    return {
+      aiMessage: {
+        id: `msg_ai_${Date.now()}`,
+        role: "ai",
+        text: fastFlightArrivalReply,
+        createdAt: now.toISOString(),
+        channel: "website_widget",
+      },
+      tripDetails: params.currentTripDetails,
+      detectedEvents: [],
+      bossInboxItems: [],
+    };
+  }
 
   let tripDetails: TripDetails;
   let contact: CapturedContact | undefined;
@@ -430,6 +446,28 @@ export function getFastOperationalReply(message: string, lang: PromptLang): stri
   return undefined;
 }
 
+/**
+ * Answers arrival-location questions from the last verified flight result.
+ * This keeps the model out of a factual lookup that has already been done and
+ * lets a customer ask the same meeting-point question again without another
+ * provider request.
+ */
+export function getFastFlightArrivalReply(
+  message: string,
+  tripDetails: TripDetails,
+  lang: PromptLang,
+): string | undefined {
+  const details = tripDetails.flightArrival;
+  if (!details) return undefined;
+
+  const arrivalQuestion = /\b(?:terminal|arrival lobby|arrivals lobby|arrival hall|meeting point|meet(?:ing)? the driver|after customs|customs)\b|航站楼|航廈|到达大厅|到達大廳|入境大厅|入境大廳|海关|海關|接机点|接機點|在哪里见司机|在哪裡見司機/iu.test(
+    message,
+  );
+  if (!arrivalQuestion) return undefined;
+
+  return formatFlightArrivalDetails(details, lang);
+}
+
 function mergeTripDetails(
   current: TripDetails,
   message: string,
@@ -439,7 +477,12 @@ function mergeTripDetails(
   const lower = message.toLowerCase();
   const extractedFields = Object.fromEntries(
     Object.entries(extractedDetails ?? {}).filter(
-      ([key, value]) => key !== "specialRequests" && value !== undefined && value !== null && value !== "",
+    ([key, value]) =>
+      key !== "specialRequests" &&
+      key !== "flightArrival" &&
+      value !== undefined &&
+      value !== null &&
+      value !== "",
     ),
   ) as Partial<TripDetails>;
   const next: TripDetails = { ...current, ...extractedFields };

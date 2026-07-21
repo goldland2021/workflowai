@@ -154,6 +154,45 @@ export interface TripDetails {
   routeDistanceKm?: number;
   estimatedDriveTimeMinutes?: number;
   specialRequests?: string[];
+  flightArrival?: FlightArrivalDetails;
+}
+
+export interface FlightArrivalDetails {
+  flightNumber: string;
+  airportCode: string;
+  airportName: string;
+  terminal?: string;
+  arrivalLobby?: string;
+  scheduledArrival?: string;
+  estimatedArrival?: string;
+  actualArrival?: string;
+  status?: string;
+  source: string;
+  checkedAt: string;
+  confidence: "confirmed" | "estimated" | "scheduled" | "partial";
+  flightId?: string;
+}
+
+export type MemorySource = "customer" | "owner" | "system";
+
+export interface ConversationMemoryFact {
+  key: string;
+  value: unknown;
+  source: MemorySource;
+  confidence: number;
+  confirmed: boolean;
+  updatedAt?: string;
+}
+
+export interface LearningCase {
+  id: string;
+  sourceType: string;
+  sourceId: string;
+  outcome: "approved" | "edited" | "rejected";
+  reviewStatus: "candidate" | "accepted" | "dismissed";
+  reasonCode: string;
+  safeContext: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface CapturedContact {

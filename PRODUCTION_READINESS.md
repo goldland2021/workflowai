@@ -13,7 +13,10 @@ atomic auth-token consumption fail closed when their RPCs are absent. Migration
   database-level conversation/booking/InBox deduplication and atomic usage
   reservation. Migration 009 adds replay protection for API requests and an
   owner-operation audit trail. Migration 010 binds quota reservations to
-  idempotency keys.
+  idempotency keys. Migration 011 stores scoped structured conversation facts,
+  booking timeline events, and owner-reviewable learning cases. Applying 011 is
+  required before the memory-aware conversation path is enabled in production.
+  Migration 012 stores the latest verified flight-arrival enrichment on bookings.
 
 ## Required Vercel variables
 
@@ -27,6 +30,8 @@ STRIPE_WEBHOOK_SECRET
 STRIPE_STARTER_PRICE_ID
 STRIPE_GROWTH_PRICE_ID
 APP_URL=https://workflowai-henna.vercel.app
+FLIGHT_DATA_API_KEY
+FLIGHT_DATA_BASE_URL=https://aeroapi.flightaware.com/aeroapi
 ```
 
 Use either an auth-email webhook:

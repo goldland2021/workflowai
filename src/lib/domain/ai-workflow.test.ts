@@ -16,6 +16,7 @@ import {
   analyzeCustomerTurn,
   filterDetectedEventsForMessage,
   getFastFaqReply,
+  getFastFlightArrivalReply,
   getFastOperationalReply,
 } from "./ai-workflow";
 import { airportTransferConfiguration } from "./airport-transfer";
@@ -153,6 +154,41 @@ describe("getFastOperationalReply", () => {
 
   it("does not intercept a quote request", () => {
     expect(getFastOperationalReply("How much is the transfer?", "en")).toBeUndefined();
+  });
+});
+
+describe("getFastFlightArrivalReply", () => {
+  const tripDetails: TripDetails = {
+    flightNumber: "UA8011",
+    airport: "Narita",
+    flightArrival: {
+      flightNumber: "UA8011",
+      airportCode: "NRT",
+      airportName: "Narita International Airport",
+      terminal: "Terminal 1",
+      arrivalLobby: "International Arrivals Lobby, Terminal 1 (1F)",
+      source: "FlightAware AeroAPI",
+      checkedAt: "2026-07-21T00:00:00.000Z",
+      confidence: "scheduled",
+    },
+  };
+
+  it("answers a follow-up terminal question from the stored lookup", () => {
+    const reply = getFastFlightArrivalReply("Which terminal will I arrive at?", tripDetails, "en");
+
+    expect(reply).toContain("Terminal 1");
+    expect(reply).toContain("International Arrivals Lobby");
+  });
+
+  it("answers Chinese arrival-lobby questions without another model turn", () => {
+    const reply = getFastFlightArrivalReply("过海关后到哪个到达大厅？", tripDetails, "zh");
+
+    expect(reply).toContain("航班 UA8011");
+    expect(reply).toContain("到达大厅");
+  });
+
+  it("does not intercept unrelated customer messages", () => {
+    expect(getFastFlightArrivalReply("Can I pay in cash?", tripDetails, "en")).toBeUndefined();
   });
 });
 

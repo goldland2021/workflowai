@@ -19,6 +19,16 @@ Production: https://workflowai-henna.vercel.app
 The LLM assists with extraction, event detection, and natural replies. Structured
 business rules remain the source of truth for pricing, escalation, and workflow state.
 
+WorkflowAI also stores structured conversation memory, booking timeline events,
+and owner-reviewable learning cases. Customer facts are scoped to one company
+and conversation; learning cases are candidates only and never modify pricing or
+business rules automatically.
+
+When `FLIGHT_DATA_API_KEY` is configured, the server can look up an arrival
+flight by flight number, date, and airport, then map the verified terminal to an
+airport arrival-lobby instruction. The customer-facing reply never invents a
+terminal when the provider cannot verify one.
+
 ## Stack
 
 - Next.js App Router, React, TypeScript, and Tailwind CSS
@@ -36,7 +46,7 @@ npm run dev
 ```
 
 Run every SQL file in `supabase/migrations` in numeric order through
-`010_idempotent_usage_reservations.sql` before testing authenticated or
+`012_flight_arrival_details.sql` before testing authenticated or
 persistent workflows. `npm run build` checks the migration files automatically;
 run `CHECK_LIVE_DB=true npm run check:migrations` with production Supabase
 credentials to verify the live schema too. Then open http://localhost:3000.

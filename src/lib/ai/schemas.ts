@@ -33,6 +33,21 @@ export const TripDetailsSchema = z.object({
   luggageCount: numberFromModelText(z.number()).optional(),
   vehiclePreference: z.string().optional(),
   specialRequests: z.union([z.array(z.string()), z.string().transform((value) => [value])]).optional(),
+  flightArrival: z.object({
+    flightNumber: z.string(),
+    airportCode: z.string(),
+    airportName: z.string(),
+    terminal: z.string().optional(),
+    arrivalLobby: z.string().optional(),
+    scheduledArrival: z.string().optional(),
+    estimatedArrival: z.string().optional(),
+    actualArrival: z.string().optional(),
+    status: z.string().optional(),
+    source: z.string(),
+    checkedAt: z.string(),
+    confidence: z.enum(['confirmed', 'estimated', 'scheduled', 'partial']),
+    flightId: z.string().optional(),
+  }).optional(),
 });
 
 export const DetectedEventSchema = z.object({

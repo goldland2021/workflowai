@@ -23,12 +23,16 @@ import {
   getBusinessConfig,
   getBookingByConversationId,
   getBossInboxItemsByConversationId,
+  getConversationMemory,
   getConversationById,
   getConversationBySessionId,
   getMessages,
   logAiFailure,
+  mergeConversationMemory,
+  recordBookingEvent,
   releaseRequestIdempotency,
   saveMessage,
+  syncConversationMemory,
   updateConversationContact,
   updateConversationLanguage,
   upsertBooking,
@@ -39,6 +43,8 @@ import { checkUsageLimit, consumeUsage } from "@/lib/saas/usage";
 import { getWidgetSettings } from "@/lib/supabase/saas";
 import { resolveConversationLang } from "@/lib/ai/prompts/templates";
 import { hashIdempotencyRequest, normalizeIdempotencyKey } from "@/lib/domain/idempotency";
+import { getChangedTripFields } from "@/lib/domain/memory";
+import { appendFlightArrivalToReply, lookupFlightArrival } from "@/lib/flight/arrival";
 
 export const runtime = "nodejs";
 
@@ -267,9 +273,10 @@ export async function POST(request: Request) {
   }
 
   if (hasDb && conversationId) {
-    const [bookingResult, inboxResult] = await Promise.allSettled([
+    const [bookingResult, inboxResult, memoryResult] = await Promise.allSettled([
       getBookingByConversationId(conversationId, companyId),
       getBossInboxItemsByConversationId(conversationId, companyId),
+      getConversationMemory(conversationId, companyId),
     ]);
 
     if (bookingResult.status === "fulfilled") {
@@ -291,6 +298,12 @@ export async function POST(request: Request) {
       }));
     } else {
       console.warn("Failed to load existing inbox items");
+    }
+
+    if (memoryResult.status === "fulfilled") {
+      currentTripDetails = mergeConversationMemory(currentTripDetails, memoryResult.value);
+    } else {
+      console.warn("Failed to load structured conversation memory");
     }
   }
 
@@ -387,7 +400,7 @@ export async function POST(request: Request) {
   }
 
   // ─── 3. Run AI analysis ───
-  let result;
+  let result: Awaited<ReturnType<typeof analyzeCustomerTurn>>;
   try {
     result = await analyzeCustomerTurn({
       message: payload.message,
@@ -410,6 +423,39 @@ export async function POST(request: Request) {
     }
     await releaseIdempotency();
     return Response.json({ error: "AI 暂时不可用，请稍后重试。" }, { status: 503 });
+  }
+
+  const flightIdentityChanged = ["flightNumber", "airport", "date"].some(
+    (field) => currentTripDetails[field as keyof typeof currentTripDetails] !== result.tripDetails[field as keyof typeof result.tripDetails],
+  );
+  const existingFlightArrival = result.tripDetails.flightArrival;
+  const flightCheckedAt = existingFlightArrival?.checkedAt ? Date.parse(existingFlightArrival.checkedAt) : 0;
+  const shouldRefreshFlightArrival = Boolean(result.tripDetails.flightNumber) &&
+    (flightIdentityChanged || !existingFlightArrival || !Number.isFinite(flightCheckedAt) || Date.now() - flightCheckedAt > 15 * 60 * 1000);
+
+  if (flightIdentityChanged && existingFlightArrival) {
+    result = {
+      ...result,
+      tripDetails: { ...result.tripDetails, flightArrival: undefined },
+    };
+  }
+
+  if (shouldRefreshFlightArrival) {
+    const flightLookup = await lookupFlightArrival({
+      flightNumber: result.tripDetails.flightNumber,
+      airport: result.tripDetails.airport,
+      date: result.tripDetails.date,
+    });
+    if (flightLookup.status === "found") {
+      result = {
+        ...result,
+        tripDetails: { ...result.tripDetails, flightArrival: flightLookup.details },
+        aiMessage: {
+          ...result.aiMessage,
+          text: appendFlightArrivalToReply(result.aiMessage.text, flightLookup.details, customerLanguage),
+        },
+      };
+    }
   }
 
   let bossInboxItems = result.bossInboxItems;
@@ -435,6 +481,34 @@ export async function POST(request: Request) {
     const bookingId = bookingResult.status === "fulfilled" ? bookingResult.value : undefined;
     if (bookingResult.status === "rejected") {
       console.warn("Failed to upsert booking draft to DB");
+    }
+
+    const changedTripFields = getChangedTripFields(currentTripDetails, result.tripDetails);
+    if (changedTripFields.length > 0) {
+      try {
+        await syncConversationMemory({
+          companyId,
+          conversationId,
+          bookingId,
+          tripDetails: result.tripDetails,
+          previousTripDetails: currentTripDetails,
+        });
+      } catch {
+        console.warn("Failed to persist structured conversation memory");
+      }
+
+      if (bookingId) {
+        await recordBookingEvent({
+          companyId,
+          bookingId,
+          conversationId,
+          eventType: "trip_details_updated",
+          idempotencyKey: requestIdempotencyKey
+            ? `trip-details:${requestIdempotencyKey}`
+            : `trip-details:${conversationId}:${JSON.stringify(result.tripDetails)}`,
+          metadata: { fields: changedTripFields },
+        }).catch(() => console.warn("Failed to record trip details event"));
+      }
     }
 
     if (result.contact) {

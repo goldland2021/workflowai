@@ -14,6 +14,8 @@ const requiredMigrations = [
   "008_idempotency_and_atomic_usage.sql",
   "009_request_idempotency_and_audit.sql",
   "010_idempotent_usage_reservations.sql",
+  "011_structured_memory_and_learning.sql",
+  "012_flight_arrival_details.sql",
 ];
 
 const files = (await readdir(migrationsDirectory)).filter((file) => file.endsWith(".sql"));
@@ -38,6 +40,8 @@ const migration007 = await readFile(resolve(migrationsDirectory, requiredMigrati
 const migration008 = await readFile(resolve(migrationsDirectory, requiredMigrations[7]), "utf8");
 const migration009 = await readFile(resolve(migrationsDirectory, requiredMigrations[8]), "utf8");
 const migration010 = await readFile(resolve(migrationsDirectory, requiredMigrations[9]), "utf8");
+const migration011 = await readFile(resolve(migrationsDirectory, requiredMigrations[10]), "utf8");
+const migration012 = await readFile(resolve(migrationsDirectory, requiredMigrations[11]), "utf8");
 if (!migration007.includes("customer_language")) {
   throw new Error("Migration 007 does not contain customer_language support.");
 }
@@ -49,6 +53,12 @@ if (!migration009.includes("request_idempotency") || !migration009.includes("aud
 }
 if (!migration010.includes("consume_company_usage_idempotent") || !migration010.includes("usage_reservations")) {
   throw new Error("Migration 010 is missing idempotent usage reservations.");
+}
+if (!migration011.includes("conversation_memory") || !migration011.includes("learning_cases") || !migration011.includes("booking_events")) {
+  throw new Error("Migration 011 is missing structured memory, learning cases, or booking events.");
+}
+if (!migration012.includes("flight_arrival")) {
+  throw new Error("Migration 012 is missing flight arrival storage.");
 }
 
 if (process.env.CHECK_LIVE_DB === "true") {
@@ -65,6 +75,10 @@ if (process.env.CHECK_LIVE_DB === "true") {
     ["request_idempotency", "request_idempotency?select=idempotency_key&limit=1"],
     ["audit_events", "audit_events?select=action&limit=1"],
     ["usage_reservations", "usage_reservations?select=idempotency_key&limit=1"],
+    ["conversation_memory", "conversation_memory?select=fact_key&limit=1"],
+    ["booking_events", "booking_events?select=event_type&limit=1"],
+    ["learning_cases", "learning_cases?select=outcome&limit=1"],
+    ["bookings.flight_arrival", "bookings?select=flight_arrival&limit=1"],
   ];
   for (const [label, path] of liveChecks) {
     const response = await fetch(`${url.replace(/\/$/, "")}/rest/v1/${path}`, {
