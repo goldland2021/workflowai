@@ -831,7 +831,7 @@ export function mergeTripDetails(
   if (lower.includes("cash")) specialRequests.add("Cash payment after service");
   if (specialRequests.size > 0) next.specialRequests = Array.from(specialRequests);
 
-  const charterIntent = /\b(?:private\s+charter|charter|day\s+tour|hourly\s+(?:hire|charter)|private\s+driver)\b|[\u5305\u8f66\u5305\u8eca\u6e38\u89c8\u666f\u70b9\u5305\u8f66\u8ba2\u5355\u6309\u5c0f\u65f6\u591a\u4e2a\u666f\u70b9]/iu.test(message);
+  const charterIntent = /\b(?:private\s+charter|charter|day\s+tour|hourly\s+(?:hire|charter)|private\s+driver)\b|包车|包車|一日游|一日遊|游览|遊覽|按小时(?:租|包)|按小時(?:租|包)|多个景点|多個景點/iu.test(message);
   if (charterIntent) next.serviceType = "day_tour";
 
   const normalized = normalizeTripDetails({ ...next, ...labeledFields });
@@ -1093,7 +1093,7 @@ function extractContact(message: string): CapturedContact | undefined {
  * quote or booking. Matches only when the WHOLE message is acknowledgement
  * tokens and there is no question. (Option A of the ack-no-repeat decision.)
  */
-function isBareAcknowledgement(message: string): boolean {
+export function isBareAcknowledgement(message: string): boolean {
   if (/[?？]/u.test(message)) return false;
   const compact = message
     .toLowerCase()
@@ -1102,8 +1102,8 @@ function isBareAcknowledgement(message: string): boolean {
     .replace(/\s+/gu, " ")
     .trim();
   if (!compact) return false;
-  const token = "(?:ok|okay|k|got it|noted|well noted|received|no problem|np|thanks|thank you|thx|cheers|great|perfect|sure|alright|all right|sounds good|good|fine|understood|so much|a lot|then|收到|好的|好|了解|明白|谢谢|多谢|感谢|沒問題|没问题)";
-  return new RegExp(`^${token}(?:\\s+${token})*$`, "u").test(compact);
+  const token = "(?:ok|okay|k|got it|noted|well noted|received|no problem|np|thanks|thank you|thx|cheers|great|perfect|sure|alright|all right|sounds good|good|fine|understood|so much|a lot|then|收到|好的|好|了解|明白|谢谢[你您啦了]?|多谢[你您啦了]?|感谢[你您]?|沒問題|没问题|好嘞)";
+  return new RegExp(`^${token}(?:\\s*${token})*$`, "u").test(compact);
 }
 
 function hasPurchaseIntent(message: string): boolean {
