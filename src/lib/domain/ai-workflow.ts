@@ -554,8 +554,13 @@ export function mergeTripDetails(
   if (itineraryDropoffNormal && !/^(?:\u5ba2\u4eba\u7684?\u9152\u5e97|the customer's? hotel)$/iu.test(itineraryDropoffNormal.trim())) {
     next.dropoffLocation = cleanText(itineraryDropoffNormal);
   }
-  const route = message.match(/(?:from\s+)?(.+?)\s+(?:to|->|→)\s+(.+?)(?=\s+(?:tomorrow|today|on|at|around|for|with|and\s+back|return(?:\s|$))|[.,!?]|$)/i);
-  const returnRoute = message.match(/\breturn\s+from\s+(.+?)\s+to\s+(.+?)(?=\s+(?:tomorrow|today|on|at|around|for|with)|[.,!?]|$)/i);
+  const referencesCurrentRoute = Boolean(current.pickupLocation && current.dropoffLocation) &&
+    /\b(?:same|this)\b[^.!?]{0,80}\broute\b/i.test(message);
+  const route = referencesCurrentRoute
+    ? undefined
+    : message.match(/\bfrom\s+(.+?)\s+(?:to|->|\u2192)\s+(.+?)(?=\s+(?:tomorrow|today|on|at|around|for|with|and\s+back|return(?:\s|$))|[,!?]|$)/i) ??
+      message.match(/^\s*(?:from\s+)?(.+?)\s+(?:to|->|\u2192)\s+(.+?)(?=\s+(?:tomorrow|today|on|at|around|for|with|and\s+back|return(?:\s|$))|[,!?]|$)/i);
+  const returnRoute = message.match(/\breturn\s+from\s+(.+?)\s+to\s+(.+?)(?=\s+(?:tomorrow|today|on|at|around|for|with)|[,!?]|$)/i);
   const chineseRoute = message.match(/(?:从|從|由)\s*(.+?)\s*(?:到|前往|去)\s*(.+?)(?=[，。,.]|$)/u);
   const fromOnly = message.match(/(?:collect\s+\w+\s+\w+\s+from|collect\s+\w+\s+from|from)\s+(.+?)(?:\s+at\s+|\s+on\s+|[.,]|$)/i);
   const travelingTo = message.match(/(?:traveling|travelling|going)\s+to\s+(.+?)(?:[.,]|$)/i);
@@ -580,6 +585,7 @@ export function mergeTripDetails(
   const chinesePassengers = message.match(/(\d+)\s*(?:位|名|个|個)?\s*(?:乘客|客人|人)/u);
   const chineseLuggage = message.match(/(\d+)\s*(?:件|个|個)?\s*(?:行李箱|行李|箱)/u);
   const terminal = message.match(new RegExp(`\\bterminal\\s*(${numberPattern})\\b`, "i"));
+  const routeDistance = message.match(/\b(?:about|approximately|approx\.?|around|within|over|under|more than|less than)?\s*(\d+(?:\.\d+)?)\s*(?:km|kilometers?|kilometres?)\b/i);
   const luggageBreakdown = extractLuggageBreakdown(message);
 
   if (route) {
@@ -691,6 +697,7 @@ export function mergeTripDetails(
   if (returnTime) next.returnTime = normalizeTime(returnTime);
   const charterHours = extractCharterHoursNormal(message) ?? extractCharterHours(message);
   if (charterHours !== undefined) next.charterHours = charterHours;
+  if (routeDistance) next.routeDistanceKm = Number(routeDistance[1]);
   if (flight) next.flightNumber = flight.toUpperCase().replace(/\s+/, " ");
   if (!flight && !extractedDetails?.flightNumber) {
     next.flightNumber = current.flightNumber;
@@ -1162,6 +1169,9 @@ function extractRouteStops(value: string | undefined): string[] {
 }
 
 function extractCharterHoursNormal(message: string): number | undefined {
+  const numericDuration = message.match(/\b(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\b/i);
+  if (numericDuration) return Number(numericDuration[1]);
+
   const matches = Array.from(message.matchAll(/(?:(\u4e0a\u5348|\u4e0b\u5348|\u665a\u4e0a|\u65e9\u4e0a|\u51cc\u6668)\s*)?([01]?\d|2[0-3])(?::([0-5]\d))\s*(am|pm)?/giu));
   if (matches.length < 2) return undefined;
 

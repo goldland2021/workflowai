@@ -128,6 +128,47 @@ describe("WorkflowAI pricing engine", () => {
     expect(result?.pricing.approvalRequired).toBe(false);
   });
 
+  it("uses the Fuji Alphard charter rate when the destination is Mt. Fuji", () => {
+    const result = calculateWorkflowQuote(
+      {
+        serviceType: "day_tour",
+        pickupLocation: "Tokyo",
+        dropoffLocation: "Mt. Fuji",
+        charterHours: 10,
+        routeDistanceKm: 300,
+        passengerCount: 4,
+        luggageCount: 2,
+        vehiclePreference: "Toyota Alphard",
+      },
+      airportTransferConfiguration,
+    );
+
+    expect(result?.priceYen).toBe(70000);
+    expect(result?.vehicleType).toBe("Toyota Alphard");
+    expect(result?.pricing.matchedRuleId).toBe("charter-fuji-alphard");
+    expect(result?.pricing.approvalRequired).toBe(false);
+  });
+
+  it("requires owner review when a Fuji charter exceeds the standard distance", () => {
+    const result = calculateWorkflowQuote(
+      {
+        serviceType: "day_tour",
+        pickupLocation: "Tokyo",
+        dropoffLocation: "Mt. Fuji",
+        charterHours: 10,
+        routeDistanceKm: 350,
+        passengerCount: 4,
+        luggageCount: 2,
+        vehiclePreference: "Toyota Alphard",
+      },
+      airportTransferConfiguration,
+    );
+
+    expect(result?.priceYen).toBe(70000);
+    expect(result?.pricing.approvalRequired).toBe(true);
+    expect(result?.pricing.approvalReason).toContain("300 km");
+  });
+
   it("uses Fuji and HiAce charter rates and applies a hotel adjustment", () => {
     const result = calculateWorkflowQuote(
       {

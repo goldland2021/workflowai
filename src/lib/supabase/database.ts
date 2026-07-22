@@ -805,9 +805,12 @@ export async function upsertBooking(
     body.currency = quote.currency;
     body.included_fees = quote.includedFees;
     body.pricing_snapshot = quote.pricing;
-    if (quote.approvalSource) {
+    if (quote.approvalSource === "owner") {
       body.approved_price = quote.suggestedPrice;
       body.status = "ready";
+    } else {
+      body.approved_price = null;
+      body.status = "draft";
     }
   }
 

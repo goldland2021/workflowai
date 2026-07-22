@@ -272,6 +272,23 @@ describe("analyzeCustomerTurn - quote suggestion rules", () => {
     expect(result.aiMessage.text).not.toMatch(/owner confirmation|老板确认/iu);
   });
 
+  it("does not claim owner approval when a customer confirms an auto quote", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "Yes, please confirm the booking.",
+      currentTripDetails: {
+        ...completeTripDetails,
+        luggageCount: 3,
+        routeDistanceKm: 72,
+      },
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.quoteAutoApproved).toBe(true);
+    expect(result.aiMessage.text).toMatch(/standard rate|标准报价/iu);
+    expect(result.aiMessage.text).not.toMatch(/owner has confirmed|老板已确认/iu);
+  });
+
   it("uses an owner-approved quote on later customer turns without reopening approval", async () => {
     const result = await analyzeCustomerTurn({
       message: "Can you confirm the quote?",
@@ -602,6 +619,47 @@ describe("analyzeCustomerTurn - multi-turn trip state", () => {
     });
     expect(result.tripDetails.flightNumber).toBeUndefined();
     expect(result.tripDetails.flightTime).toBeUndefined();
+  });
+
+  it("keeps Mt. Fuji intact and extracts charter hours and distance", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "Please quote a private charter from Tokyo to Mt. Fuji, 10 hours and about 350 km, for 4 passengers with 2 suitcases.",
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails).toMatchObject({
+      serviceType: "day_tour",
+      pickupLocation: "Tokyo",
+      dropoffLocation: "Mt. Fuji",
+      charterHours: 10,
+      routeDistanceKm: 350,
+      passengerCount: 4,
+      luggageCount: 2,
+    });
+    expect(result.quote?.suggestedPrice).toBe(70000);
+    expect(result.quote?.pricing?.approvalRequired).toBe(true);
+  });
+
+  it("preserves the stored route when a customer asks about the same route", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "For 3 passengers with 6 large suitcases, is a Toyota Alphard suitable for this same Haneda to Nishikasai route?",
+      currentTripDetails: {
+        serviceType: "airport_pickup",
+        pickupLocation: "Haneda Airport",
+        dropoffLocation: "Nishikasai",
+        passengerCount: 3,
+        luggageCount: 6,
+        routeDistanceKm: 25,
+      },
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails.pickupLocation).toBe("Haneda Airport");
+    expect(result.tripDetails.dropoffLocation).toBe("Nishikasai");
+    expect(result.quote?.vehicleType).toBe("Toyota Alphard");
   });
 
   it("extracts Chinese route, date, passenger, luggage, airport, and vehicle fields", async () => {
