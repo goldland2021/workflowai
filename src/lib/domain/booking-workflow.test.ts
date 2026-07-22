@@ -57,6 +57,18 @@ describe("getMissingQuoteFields", () => {
     expect(getMissingQuoteFields(tripDetails)).toEqual([]);
     expect(getMissingBookingFields(tripDetails)).toEqual(["date", "time"]);
   });
+
+  it("treats a hotel name as the temporary destination for an airport pickup", () => {
+    const tripDetails: TripDetails = {
+      serviceType: "airport_pickup",
+      airport: "Narita",
+      hotelName: "The Ritz-Carlton Tokyo",
+      passengerCount: 2,
+    };
+
+    expect(getMissingQuoteFields(tripDetails)).toEqual([]);
+    expect(getMissingBookingFields(tripDetails)).toEqual(["date", "time"]);
+  });
 });
 
 describe("createBookingSummary - owner approval is required for a final price", () => {
