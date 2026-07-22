@@ -673,6 +673,23 @@ describe("analyzeCustomerTurn - multi-turn trip state", () => {
     expect(result.aiMessage.text).not.toMatch(/drop-off location|hotel address/iu);
   });
 
+  it("uses Narita from the airport field without asking for pickup location", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "How much will it be?",
+      currentTripDetails: {
+        airport: "Narita",
+        dropoffLocation: "The Ritz-Carlton Tokyo",
+        passengerCount: 2,
+      },
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails.serviceType).toBe("airport_pickup");
+    expect(result.quote?.suggestedPrice).toBeGreaterThan(0);
+    expect(result.aiMessage.text).not.toMatch(/pickup location|上车地点/iu);
+  });
+
   it("keeps Mt. Fuji intact and extracts charter hours and distance", async () => {
     const result = await analyzeCustomerTurn({
       message: "Please quote a private charter from Tokyo to Mt. Fuji, 10 hours and about 350 km, for 4 passengers with 2 suitcases.",

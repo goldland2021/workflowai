@@ -764,10 +764,12 @@ export function mergeTripDetails(
   // A flight number plus a hotel is enough to prepare an estimate. Keep a
   // generic airport placeholder so the worksheet does not ask for the same
   // exact meeting point again; the driver can confirm that point later.
-  if (airportTransferContext && normalized.flightNumber && normalized.dropoffLocation && !normalized.serviceType) {
-    normalized.serviceType = "airport_pickup";
+  if (airportTransferContext && normalized.dropoffLocation && !normalized.serviceType) {
+    normalized.serviceType = /airport|narita|haneda|kansai|itami|成田|羽田|关西|關西|伊丹/iu.test(normalized.dropoffLocation)
+      ? "airport_dropoff"
+      : "airport_pickup";
   }
-  if (normalized.serviceType === "airport_pickup" && normalized.flightNumber && !normalized.pickupLocation) {
+  if (normalized.serviceType === "airport_pickup" && (normalized.flightNumber || normalized.airport) && !normalized.pickupLocation) {
     normalized.pickupLocation = normalized.airport ? `${normalized.airport} Airport` : "Airport";
   }
 

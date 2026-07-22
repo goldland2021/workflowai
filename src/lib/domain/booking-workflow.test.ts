@@ -32,6 +32,18 @@ describe("getMissingQuoteFields", () => {
     expect(getMissingBookingFields({ pickupLocation: "Airport", dropoffLocation: "Hotel", passengerCount: 2 })).toEqual(["date", "time"]);
     expect(getMissingBookingFields({ pickupLocation: "Airport", dropoffLocation: "Hotel", passengerCount: 2, flightTime: "15:05" })).toEqual(["date"]);
   });
+
+  it("treats a configured airport as the pickup location for an airport transfer", () => {
+    const tripDetails: TripDetails = {
+      serviceType: "airport_pickup",
+      airport: "Narita",
+      dropoffLocation: "The Ritz-Carlton Tokyo",
+      passengerCount: 2,
+    };
+
+    expect(getMissingQuoteFields(tripDetails)).toEqual([]);
+    expect(getMissingBookingFields(tripDetails)).toEqual(["date", "time"]);
+  });
 });
 
 describe("createBookingSummary - owner approval is required for a final price", () => {

@@ -21,14 +21,33 @@ const bookingRequiredFields: TripFieldKey[] = [
 ];
 
 export function getMissingQuoteFields(tripDetails: TripDetails): TripFieldKey[] {
-  return quoteRequiredFields.filter((field) => !tripDetails[field]);
+  return quoteRequiredFields.filter((field) => isFieldMissingForEstimate(tripDetails, field));
 }
 
 export function getMissingBookingFields(tripDetails: TripDetails): TripFieldKey[] {
   return bookingRequiredFields.filter((field) => {
     if (field === "time") return !tripDetails.time && !tripDetails.flightTime;
-    return !tripDetails[field];
+    return isFieldMissingForEstimate(tripDetails, field);
   });
+}
+
+function isFieldMissingForEstimate(tripDetails: TripDetails, field: TripFieldKey): boolean {
+  if (field !== "pickupLocation") return !tripDetails[field];
+  if (tripDetails.pickupLocation) return false;
+
+  const airportTransfer = Boolean(
+    tripDetails.serviceType === "airport_pickup" ||
+      tripDetails.serviceType === "airport_dropoff" ||
+      tripDetails.airport ||
+      tripDetails.flightNumber,
+  );
+  const airportIsDestination = /airport|narita|haneda|kansai|itami|成田|羽田|关西|關西|伊丹/iu.test(
+    tripDetails.dropoffLocation ?? "",
+  );
+
+  // For an airport pickup, the airport field is the pickup location. Exact
+  // terminal or meeting-point details can be confirmed with the driver later.
+  return !(airportTransfer && tripDetails.serviceType !== "airport_dropoff" && !airportIsDestination);
 }
 
 export function createBookingSummary(params: {
