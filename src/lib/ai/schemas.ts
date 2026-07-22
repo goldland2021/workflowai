@@ -43,6 +43,13 @@ export const TripDetailsSchema = z.object({
   returnPickupLocation: z.string().optional(),
   returnDropoffLocation: z.string().optional(),
   returnTime: z.string().optional(),
+  charterHours: numberFromModelText(z.number().positive()).optional(),
+  routeStops: z.array(z.string()).optional(),
+  hotelName: z.string().optional(),
+  hotelStarRating: numberFromModelText(z.number().min(0).max(5)).optional(),
+  hotelNightlyRateYen: numberFromModelText(z.number().nonnegative()).optional(),
+  hotelTier: z.enum(['standard', 'premium', 'luxury']).optional(),
+  hotelCharterAdjustmentYen: numberFromModelText(z.number()).optional(),
   tollYen: numberFromModelText(z.number().nonnegative()).optional(),
   specialRequests: z.union([z.array(z.string()), z.string().transform((value) => [value])]).optional(),
   flightArrival: z.object({
@@ -88,7 +95,7 @@ export const DetectedEventSchema = z.object({
 
 export const QuoteSuggestionSchema = z.object({
   suggestedPrice: numberFromModelText(z.number()),
-  currency: z.string().default('USD'),
+    currency: z.string().default('JPY'),
   vehicleType: z.string().optional(),
   reason: z.string(),
   confidence: numberFromModelText(z.number().min(0).max(100), 75),

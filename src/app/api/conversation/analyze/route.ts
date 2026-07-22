@@ -18,6 +18,7 @@ import { isWidgetOriginAllowed, verifyWidgetToken } from "@/lib/auth/widget";
 import { isConfigured } from "@/lib/supabase/client";
 import {
   bookingRowToQuote,
+  bossInboxRowToQuote,
   bookingRowToTripDetails,
   claimRequestIdempotency,
   completeRequestIdempotency,
@@ -30,6 +31,7 @@ import {
   getConversationById,
   getConversationBySessionId,
   getMessages,
+  getHotelReferenceCatalog,
   logAiFailure,
   mergeConversationMemory,
   recordBookingEvent,
@@ -49,6 +51,7 @@ import { hashIdempotencyRequest, normalizeIdempotencyKey } from "@/lib/domain/id
 import { getChangedTripFields } from "@/lib/domain/memory";
 import { appendFlightArrivalToReply, lookupFlightArrival } from "@/lib/flight/arrival";
 import { enrichTripDetailsWithGoogleMaps } from "@/lib/maps/route-enrichment";
+import { enrichTripDetailsWithHotelReference } from "@/lib/domain/hotel-reference";
 
 export const runtime = "nodejs";
 
@@ -295,6 +298,11 @@ export async function POST(request: Request) {
     }
 
     if (inboxResult.status === "fulfilled") {
+      const approvedInboxQuote = inboxResult.value
+        .find((item) => item.type === "quote_approval" && item.status === "approved");
+      if (!approvedQuote && approvedInboxQuote) {
+        approvedQuote = bossInboxRowToQuote(approvedInboxQuote);
+      }
       existingBossItems = inboxResult.value.map((item) => ({
         status: item.status as "pending" | "approved" | "edited" | "rejected",
         type: item.type as "quote_approval" | "event_review" | "driver_assignment" | "receipt_request" | "change_request" | "payment_coordination",
@@ -412,6 +420,10 @@ export async function POST(request: Request) {
       configuration: configToUse,
       existingBossItems,
       routeEnricher: enrichTripDetailsWithGoogleMaps,
+      hotelReferenceResolver: async (tripDetails) => {
+        const references = await getHotelReferenceCatalog(companyId);
+        return enrichTripDetailsWithHotelReference(tripDetails, references);
+      },
       approvedQuote,
       recentMessages: recentMessagesForAI,
       customerLanguage,
@@ -475,7 +487,7 @@ export async function POST(request: Request) {
         requestIdempotencyKey ? `${requestIdempotencyKey}:ai` : undefined,
       ),
       shouldUpdateBooking
-        ? upsertBooking(conversationId, result.tripDetails, companyId)
+        ? upsertBooking(conversationId, result.tripDetails, companyId, undefined, result.quote)
         : Promise.resolve(undefined),
     ]);
 

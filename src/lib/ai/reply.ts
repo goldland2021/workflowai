@@ -59,6 +59,23 @@ function quoteAmountAppears(text: string, quote: QuoteSuggestion): boolean {
   return normalizedText.includes(normalizedAmount);
 }
 
+export function asksForKnownTripField(text: string, tripDetails: TripDetails): boolean {
+  if (!/[?？]/u.test(text) && !/\b(?:could you|please provide|what is|where is|how many)\b/iu.test(text)) {
+    return false;
+  }
+
+  const knownFieldPatterns: Array<[keyof TripDetails, RegExp]> = [
+    ["pickupLocation", /\b(?:pickup|pick-up|pick up|starting point)\b|\u4e0a\u8f66\u5730\u70b9|\u63a5\u8f66\u5730\u70b9/iu],
+    ["dropoffLocation", /\b(?:drop-?off|destination|hotel|address)\b|\u4e0b\u8f66\u5730\u70b9|\u9001\u8fbe\u5730\u70b9|\u9152\u5e97|\u5730\u5740/iu],
+    ["passengerCount", /\b(?:passenger|people|pax|persons?)\b|\u4e58\u5ba2|\u4eba\u6570/iu],
+    ["luggageCount", /\b(?:luggage|bags?|suitcases?)\b|\u884c\u674e|\u7bb1\u5b50/iu],
+    ["date", /\b(?:date|day|when)\b|\u65e5\u671f|\u51e0\u6708|\u54ea\u5929/iu],
+    ["time", /\b(?:pickup\s+time|pick-?up\s+time|what time)\b|\u4e0a\u8f66\u65f6\u95f4|\u63a5\u8f66\u65f6\u95f4/iu],
+  ];
+
+  return knownFieldPatterns.some(([field, pattern]) => Boolean(tripDetails[field]) && pattern.test(text));
+}
+
 function fallbackReply(params: {
   customerMessage: string;
   lang: PromptLang;
@@ -221,7 +238,10 @@ export async function generateAiReplyWithAI(params: {
   try {
     const generated = await generateReply(prompt, system, temperature);
     if (replyLanguageMatches(generated, lang)) {
-      if (quoteApproved && quote && /owner|confirm|provisional|preliminary|pending|老板|确认|初步|参考|等待|待定/iu.test(generated)) {
+      if (asksForKnownTripField(generated, tripDetails)) {
+        return fallbackReply({ customerMessage, lang, contact, detectedEvents: params.detectedEvents, quote, quoteApproved, quoteAutoApproved, missingFields, missingBookingFields });
+      }
+      if ((quoteApproved || quoteAutoApproved) && quote && /owner|confirm|provisional|preliminary|pending|老板|确认|初步|参考|等待|待定/iu.test(generated)) {
         return fallbackReply({ customerMessage, lang, contact, detectedEvents: params.detectedEvents, quote, quoteApproved, quoteAutoApproved, missingFields, missingBookingFields });
       }
       if (!quote || quoteAmountAppears(generated, quote)) return generated;

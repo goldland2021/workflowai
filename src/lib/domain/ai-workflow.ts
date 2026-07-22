@@ -24,6 +24,7 @@ import { redactContactDetails } from "../ai/pii";
 import { resolveConversationLang, type PromptLang } from "../ai/prompts/templates";
 import { formatFlightArrivalDetails } from "../flight/arrival";
 import { calculateWorkflowQuote } from "./pricing";
+import { extractDateText, extractLabeledTripFields, normalizeTripDetails } from "./trip-state";
 
 const eventKeywords: Array<{
   type: EventType;
@@ -160,6 +161,7 @@ const fieldLabelsZh: Record<TripFieldKey, string> = {
 };
 
 const explicitEventIntent: Partial<Record<EventType, RegExp>> = {
+  "Discount Request": /\b(?:discount|cheaper|lower price|best price|too expensive|special offer|special price)\b|折扣|优惠|優惠|便宜|特价|特價/iu,
   "Urgent Booking": /\b(?:urgent|asap|right now|today|tonight|immediately|same[- ]day|in (?:one|1) hour)\b|紧急|立即|马上|今天|今晚|当日/iu,
   "Receipt Request": /\b(?:receipt|invoice)\b|发票|收据/iu,
   "Route Change": /\b(?:change|update|switch|different|another)\b.{0,30}\b(?:route|pickup|drop-?off|destination|hotel|stop)\b|(?:改|更改|调整|换).{0,12}(?:路线|上车|下车|目的地|酒店)/iu,
@@ -195,6 +197,7 @@ export async function analyzeCustomerTurn(params: {
   configuration: BusinessConfiguration;
   existingBossItems: ExistingBossInboxItem[];
   routeEnricher?: (tripDetails: TripDetails) => Promise<TripDetails>;
+  hotelReferenceResolver?: (tripDetails: TripDetails) => Promise<TripDetails>;
   approvedQuote?: QuoteSuggestion;
   recentMessages?: ConversationMessage[];
   customerLanguage?: PromptLang;
@@ -296,6 +299,14 @@ export async function analyzeCustomerTurn(params: {
       tripDetails = await params.routeEnricher(tripDetails);
     } catch {
       // Route enrichment is an accuracy improvement, not a reason to block chat.
+    }
+  }
+
+  if (params.hotelReferenceResolver) {
+    try {
+      tripDetails = await params.hotelReferenceResolver(tripDetails);
+    } catch {
+      // Hotel reference data is optional context and must not block a quote.
     }
   }
 
@@ -490,7 +501,7 @@ export function getFastFlightArrivalReply(
   return formatFlightArrivalDetails(details, lang);
 }
 
-function mergeTripDetails(
+export function mergeTripDetails(
   current: TripDetails,
   message: string,
   extractedDetails?: TripDetails,
@@ -507,11 +518,41 @@ function mergeTripDetails(
       value !== "",
     ),
   ) as Partial<TripDetails>;
-  const next: TripDetails = { ...current, ...extractedFields };
+  // Persisted customer facts are authoritative. The model may fill an empty
+  // field, but it cannot silently replace a confirmed route, date, passenger
+  // count, or vehicle choice; deterministic parsing below handles explicit
+  // customer corrections.
+  const safeExtractedFields = Object.fromEntries(
+    Object.entries(extractedFields).filter(([key]) => {
+      const currentValue = current[key as keyof TripDetails];
+      return currentValue === undefined || currentValue === null || currentValue === "";
+    }),
+  ) as Partial<TripDetails>;
+  const labeledFields = extractLabeledTripFields(message);
+  const next: TripDetails = { ...current, ...safeExtractedFields, ...labeledFields };
   if (extractedDetails?.specialRequests?.length) {
     next.specialRequests = Array.from(
       new Set([...(current.specialRequests ?? []), ...extractedDetails.specialRequests]),
     );
+  }
+  const itineraryPickup = message.match(/(?:接车地点|上车地点|接送地点|pickup(?:\s+location)?)[：:]\s*([^\n\r]+)/iu)?.[1];
+  const itineraryDropoff = message.match(/(?:送达地点|下车地点|drop(?:-?off)?(?:\s+location)?)[：:]\s*([^\n\r]+)/iu)?.[1];
+  const itineraryStops = message.match(/(?:计划景点|游览景点|路线景点|stops?|itinerary)[：:]\s*([^\n\r]+)/iu)?.[1];
+  const itineraryPickupNormal = message.match(/(?:\u63a5\u8f66\u5730\u70b9|\u4e0a\u8f66\u5730\u70b9|\u63a5\u9001\u5730\u70b9|pickup(?:\s+location)?)[\uFF1A:]\s*([^\n\r]+)/iu)?.[1];
+  const itineraryDropoffNormal = message.match(/(?:\u9001\u8fbe\u5730\u70b9|\u4e0b\u8f66\u5730\u70b9|drop(?:-?off)?(?:\s+location)?)[\uFF1A:]\s*([^\n\r]+)/iu)?.[1];
+  const itineraryStopsNormal = message.match(/(?:\u8ba1\u5212\u666f\u70b9|\u6e38\u89c8\u666f\u70b9|\u8def\u7ebf\u666f\u70b9|stops?|itinerary)[\uFF1A:]\s*([^\n\r]+)/iu)?.[1];
+  const normalStops = extractRouteStopsNormal(itineraryStopsNormal ?? itineraryStops);
+  const extractedStops = normalStops.length > 0 ? normalStops : extractRouteStops(itineraryStops);
+  if (itineraryPickup) next.pickupLocation = cleanText(itineraryPickup);
+  if (itineraryDropoff && !/^客人的?酒店$|^the customer's? hotel$/iu.test(itineraryDropoff.trim())) {
+    next.dropoffLocation = cleanText(itineraryDropoff);
+  }
+  if (extractedStops.length > 0) {
+    next.routeStops = Array.from(new Set([...(next.routeStops ?? []), ...extractedStops]));
+  }
+  if (itineraryPickupNormal) next.pickupLocation = cleanText(itineraryPickupNormal);
+  if (itineraryDropoffNormal && !/^(?:\u5ba2\u4eba\u7684?\u9152\u5e97|the customer's? hotel)$/iu.test(itineraryDropoffNormal.trim())) {
+    next.dropoffLocation = cleanText(itineraryDropoffNormal);
   }
   const route = message.match(/(?:from\s+)?(.+?)\s+(?:to|->|→)\s+(.+?)(?=\s+(?:tomorrow|today|on|at|around|for|with|and\s+back|return(?:\s|$))|[.,!?]|$)/i);
   const returnRoute = message.match(/\breturn\s+from\s+(.+?)\s+to\s+(.+?)(?=\s+(?:tomorrow|today|on|at|around|for|with)|[.,!?]|$)/i);
@@ -530,6 +571,10 @@ function mergeTripDetails(
   const returnTime = message.match(/\b(?:and\s+)?back\b.{0,40}?\b(\d{1,2}(?::[0-5]\d)?\s*(?:am|pm))\b/i)?.[1] ??
     message.match(/\breturn(?:\s+from)?\b.{0,40}?\b(\d{1,2}(?::[0-5]\d)?\s*(?:am|pm))\b/i)?.[1];
   const numberPattern = "\\d+|one|two|three|four|five|six|seven|eight|nine|ten";
+  const chinesePassengersNormalValue = message.match(/(\d+)\s*(?:\u4f4d|\u540d|\u4eba)\s*(?:\u4e58\u5ba2|\u5ba2\u4eba)?/u);
+  const chineseLuggageNormalValue = message.match(/(\d+)\s*(?:\u4ef6|\u4e2a)\s*(?:\u884c\u674e|\u7bb1\u5b50|\u7bb1)/u);
+  const chinesePassengersNormal = message.match(/(\d+)\s*(?:位|名|人)\s*(?:乘客|客人)?/u);
+  const chineseLuggageNormal = message.match(/(\d+)\s*(?:件|个)\s*(?:行李|箱子|箱)/u);
   const passengers = message.match(new RegExp(`\\b(${numberPattern})\\s*(?:passengers?|people|pax|persons?|adults?)\\b`, "i"));
   const luggage = message.match(new RegExp(`\\b(${numberPattern})\\s*(?:small|medium|large|sized|medium-sized|large-sized|small-sized|\\s|-)*(?:bags?|luggage|suitcases?)\\b`, "i"));
   const chinesePassengers = message.match(/(\d+)\s*(?:位|名|个|個)?\s*(?:乘客|客人|人)/u);
@@ -634,9 +679,9 @@ function mergeTripDetails(
   } else if (lower.includes("today")) {
     next.date = "Today";
   } else {
-    const date = message.match(/\b(?:\d{1,2}\s+)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*(?:\s+\d{1,2})?\b|\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b/i);
+    const date = extractDateText(message);
     const chineseDate = message.match(/(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*[日号號]/u);
-    if (date) next.date = date[0];
+    if (date) next.date = date;
     else if (chineseDate) next.date = `${chineseDate[1] ? `${chineseDate[1]}年` : ""}${chineseDate[2]}月${chineseDate[3]}日`;
   }
 
@@ -644,12 +689,16 @@ function mergeTripDetails(
     next.time = normalizeTime(time[0]);
   }
   if (returnTime) next.returnTime = normalizeTime(returnTime);
+  const charterHours = extractCharterHoursNormal(message) ?? extractCharterHours(message);
+  if (charterHours !== undefined) next.charterHours = charterHours;
   if (flight) next.flightNumber = flight.toUpperCase().replace(/\s+/, " ");
   if (!flight && !extractedDetails?.flightNumber) {
     next.flightNumber = current.flightNumber;
     next.flightTime = current.flightTime;
   }
   if (passengers) next.passengerCount = parseNumberToken(passengers[1]);
+  else if (chinesePassengersNormalValue) next.passengerCount = Number(chinesePassengersNormalValue[1]);
+  else if (chinesePassengersNormal) next.passengerCount = Number(chinesePassengersNormal[1]);
   else if (chinesePassengers) next.passengerCount = Number(chinesePassengers[1]);
   if (luggageBreakdown) {
     const isAdditionalLuggage = /\b(?:more|extra|additional)\b|再|多|额外|額外/u.test(lower);
@@ -660,6 +709,8 @@ function mergeTripDetails(
     next.luggageBreakdown = combined;
     next.luggageCount = combined.total;
   } else if (luggage) next.luggageCount = parseNumberToken(luggage[1]);
+  else if (chineseLuggageNormalValue) next.luggageCount = Number(chineseLuggageNormalValue[1]);
+  else if (chineseLuggageNormal) next.luggageCount = Number(chineseLuggageNormal[1]);
   else if (chineseLuggage) next.luggageCount = Number(chineseLuggage[1]);
 
   if (lower.includes("van") || lower.includes("minivan") || lower.includes("海狮") || lower.includes("海獅") || lower.includes("hiace")) {
@@ -681,7 +732,10 @@ function mergeTripDetails(
   if (lower.includes("cash")) specialRequests.add("Cash payment after service");
   if (specialRequests.size > 0) next.specialRequests = Array.from(specialRequests);
 
-  return next;
+  const charterIntent = /\b(?:private\s+charter|charter|day\s+tour|hourly\s+(?:hire|charter)|private\s+driver)\b|[\u5305\u8f66\u5305\u8eca\u6e38\u89c8\u666f\u70b9\u5305\u8f66\u8ba2\u5355\u6309\u5c0f\u65f6\u591a\u4e2a\u666f\u70b9]/iu.test(message);
+  if (charterIntent) next.serviceType = "day_tour";
+
+  return normalizeTripDetails({ ...next, ...labeledFields });
 }
 
 function detectEvents(message: string): DetectedEvent[] {
@@ -768,6 +822,8 @@ function hasQuoteRelevantTripChanges(current: TripDetails, next: TripDetails): b
     "returnPickupLocation",
     "returnDropoffLocation",
     "returnTime",
+    "charterHours",
+    "routeStops",
   ];
 
   return fields.some((field) => {
@@ -1087,6 +1143,60 @@ function looksLikeLocationReply(message: string): boolean {
   return /hotel|address|street|road|avenue|station|airport|tokyo|shinjuku|shibuya|ginza|ueno|asakusa|yokohama|narita|haneda|酒店|地址|街|路|丁目|番地|号|机场|车站|車站/iu.test(
     compact,
   );
+}
+
+function extractRouteStopsNormal(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(/[\u3001,\uFF0C;\uFF1B|]/u)
+    .map((stop) => stop.trim())
+    .filter((stop) => stop.length >= 2 && !/\u5982\u65f6\u95f4\u5141\u8bb8|\u5982\u6709\u65f6\u95f4|if time permits|if possible/iu.test(stop));
+}
+
+function extractRouteStops(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(/[、,，;；|]/u)
+    .map((stop) => stop.trim())
+    .filter((stop) => stop.length >= 2 && !/如时间允许|如有时间|if time permits|if possible/iu.test(stop));
+}
+
+function extractCharterHoursNormal(message: string): number | undefined {
+  const matches = Array.from(message.matchAll(/(?:(\u4e0a\u5348|\u4e0b\u5348|\u665a\u4e0a|\u65e9\u4e0a|\u51cc\u6668)\s*)?([01]?\d|2[0-3])(?::([0-5]\d))\s*(am|pm)?/giu));
+  if (matches.length < 2) return undefined;
+
+  const toMinutes = (match: RegExpMatchArray): number => {
+    const meridiem = (match[1] ?? match[4] ?? "").toLowerCase();
+    let hour = Number(match[2]);
+    const minute = Number(match[3] ?? 0);
+    if ((meridiem === "pm" || meridiem === "\u4e0b\u5348" || meridiem === "\u665a\u4e0a") && hour < 12) hour += 12;
+    if ((meridiem === "am" || meridiem === "\u4e0a\u5348" || meridiem === "\u65e9\u4e0a" || meridiem === "\u51cc\u6668") && hour === 12) hour = 0;
+    return hour * 60 + minute;
+  };
+
+  const start = toMinutes(matches[0]);
+  const end = toMinutes(matches[1]);
+  const duration = end >= start ? end - start : end + 24 * 60 - start;
+  return duration > 0 ? Math.round((duration / 60) * 10) / 10 : undefined;
+}
+
+function extractCharterHours(message: string): number | undefined {
+  const matches = Array.from(message.matchAll(/(?:(上午|下午|晚上|早上|凌晨)\s*)?([01]?\d|2[0-3])(?::([0-5]\d))\s*(am|pm)?/giu));
+  if (matches.length < 2) return undefined;
+
+  const toMinutes = (match: RegExpMatchArray): number => {
+    const meridiem = (match[1] ?? match[4] ?? "").toLowerCase();
+    let hour = Number(match[2]);
+    const minute = Number(match[3] ?? 0);
+    if ((meridiem === "pm" || meridiem === "下午" || meridiem === "晚上") && hour < 12) hour += 12;
+    if ((meridiem === "am" || meridiem === "上午" || meridiem === "早上" || meridiem === "凌晨") && hour === 12) hour = 0;
+    return hour * 60 + minute;
+  };
+
+  const start = toMinutes(matches[0]);
+  const end = toMinutes(matches[1]);
+  const duration = end >= start ? end - start : end + 24 * 60 - start;
+  return duration > 0 ? Math.round((duration / 60) * 10) / 10 : undefined;
 }
 
 function extractLuggageBreakdown(message: string): TripDetails["luggageBreakdown"] {

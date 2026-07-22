@@ -189,7 +189,7 @@ export const airportTransferConfiguration: BusinessConfiguration = {
       type: "Alphard",
       capacity: {
         passengers: 6,
-        luggage: 4,
+        luggage: 6,
       },
      description: "Comfortable premium MPV for up to 6 passengers.",
     },

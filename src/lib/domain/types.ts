@@ -104,6 +104,34 @@ export interface PricingCityRoute {
   roundTripYen?: number;
 }
 
+export interface CharterPricingPolicy {
+  standardHours: number;
+  standardDistanceKm: number;
+  alphardBaseYen: number;
+  hiaceBaseYen: number;
+  fujiAlphardBaseYen: number;
+  fujiHiaceBaseYen: number;
+  fujiKeywords: string[];
+}
+
+export interface HotelReference {
+  id: string;
+  companyId?: string;
+  hotelName: string;
+  aliases: string[];
+  city?: string;
+  region?: string;
+  starRating?: number;
+  nightlyRateYen?: number;
+  currency: string;
+  rateBasis: "manual" | "observed" | "average";
+  sourceUrl?: string;
+  observedAt?: string;
+  charterAdjustmentYen: number;
+  notes?: string;
+  active: boolean;
+}
+
 export interface PricingPolicy {
   engineVersion: string;
   currency: string;
@@ -117,6 +145,7 @@ export interface PricingPolicy {
   airports: Record<string, PricingAirportRule>;
   fixedRoutes: PricingFixedRoute[];
   cityRoutes?: PricingCityRoute[];
+  charter?: CharterPricingPolicy;
   interAirportFares: Record<string, number>;
 }
 
@@ -195,6 +224,14 @@ export interface TripDetails {
   returnPickupLocation?: string;
   returnDropoffLocation?: string;
   returnTime?: string;
+  charterHours?: number;
+  routeStops?: string[];
+  hotelName?: string;
+  hotelReferenceId?: string;
+  hotelStarRating?: number;
+  hotelNightlyRateYen?: number;
+  hotelTier?: "standard" | "premium" | "luxury";
+  hotelCharterAdjustmentYen?: number;
   routeDistanceKm?: number;
   tollYen?: number;
   estimatedDriveTimeMinutes?: number;
@@ -279,7 +316,7 @@ export interface QuoteSuggestion {
   pricing?: PricingSnapshot;
 }
 
-export type PricingSource = "fixed_route" | "distance_formula" | "business_rule";
+export type PricingSource = "fixed_route" | "distance_formula" | "business_rule" | "charter_rule";
 export type PricingConfidence = "high" | "medium" | "low";
 
 export interface PricingSnapshot {

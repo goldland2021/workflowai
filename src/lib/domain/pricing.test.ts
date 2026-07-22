@@ -92,4 +92,59 @@ describe("WorkflowAI pricing engine", () => {
     expect(result?.pricing.approvalRequired).toBe(true);
     expect(result?.pricing.approvalReason).toContain("special");
   });
+
+  it("keeps three passengers with six ordinary bags in one Alphard", () => {
+    const result = calculateWorkflowQuote(
+      {
+        serviceType: "airport_pickup",
+        pickupLocation: "Narita Airport",
+        dropoffLocation: "Tokyo hotel",
+        passengerCount: 3,
+        luggageCount: 6,
+        routeDistanceKm: 72,
+      },
+      airportTransferConfiguration,
+    );
+
+    expect(result?.vehicleType).toBe("Toyota Alphard");
+  });
+
+  it("uses the standard Alphard charter price for a private itinerary", () => {
+    const result = calculateWorkflowQuote(
+      {
+        serviceType: "day_tour",
+        pickupLocation: "Odawara Station",
+        dropoffLocation: "HOTEL CLAD",
+        routeStops: ["Hakone Shrine", "Owakudani"],
+        charterHours: 6,
+        passengerCount: 4,
+        luggageCount: 0,
+      },
+      airportTransferConfiguration,
+    );
+
+    expect(result?.priceYen).toBe(60000);
+    expect(result?.pricing.source).toBe("charter_rule");
+    expect(result?.pricing.approvalRequired).toBe(false);
+  });
+
+  it("uses Fuji and HiAce charter rates and applies a hotel adjustment", () => {
+    const result = calculateWorkflowQuote(
+      {
+        serviceType: "day_tour",
+        pickupLocation: "Tokyo",
+        dropoffLocation: "Fuji area",
+        charterHours: 10,
+        passengerCount: 5,
+        luggageCount: 6,
+        vehiclePreference: "HiAce",
+        hotelCharterAdjustmentYen: 5000,
+      },
+      airportTransferConfiguration,
+    );
+
+    expect(result?.priceYen).toBe(80000);
+    expect(result?.vehicleType).toBe("Toyota HiAce");
+    expect(result?.pricing.matchedRuleId).toBe("charter-fuji-hiace");
+  });
 });

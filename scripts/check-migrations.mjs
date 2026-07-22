@@ -18,6 +18,8 @@ const requiredMigrations = [
   "012_flight_arrival_details.sql",
   "013_pricing_snapshots.sql",
   "014_jpairport_pricing_configuration.sql",
+  "015_hotel_reference_and_charter_pricing.sql",
+  "016_workflow_quote_state_defaults.sql",
 ];
 
 const files = (await readdir(migrationsDirectory)).filter((file) => file.endsWith(".sql"));
@@ -46,6 +48,8 @@ const migration011 = await readFile(resolve(migrationsDirectory, requiredMigrati
 const migration012 = await readFile(resolve(migrationsDirectory, requiredMigrations[11]), "utf8");
 const migration013 = await readFile(resolve(migrationsDirectory, requiredMigrations[12]), "utf8");
 const migration014 = await readFile(resolve(migrationsDirectory, requiredMigrations[13]), "utf8");
+const migration015 = await readFile(resolve(migrationsDirectory, requiredMigrations[14]), "utf8");
+const migration016 = await readFile(resolve(migrationsDirectory, requiredMigrations[15]), "utf8");
 if (!migration007.includes("customer_language")) {
   throw new Error("Migration 007 does not contain customer_language support.");
 }
@@ -70,6 +74,12 @@ if (!migration013.includes("pricing_snapshot")) {
 if (!migration014.includes("company_jpairport") || !migration014.includes("workflowai-pricing-v2")) {
   throw new Error("Migration 014 is missing the live JP VIP pricing configuration.");
 }
+if (!migration015.includes("hotel_reference_catalog") || !migration015.includes("standardHours") || !migration015.includes("fujiHiaceBaseYen")) {
+  throw new Error("Migration 015 is missing hotel reference or charter pricing support.");
+}
+if (!migration016.includes("ALTER COLUMN currency SET DEFAULT 'JPY'")) {
+  throw new Error("Migration 016 is missing the JPY quote currency default.");
+}
 
 if (process.env.CHECK_LIVE_DB === "true") {
   const url = process.env.SUPABASE_URL;
@@ -91,6 +101,8 @@ if (process.env.CHECK_LIVE_DB === "true") {
     ["bookings.flight_arrival", "bookings?select=flight_arrival&limit=1"],
     ["boss_inbox.pricing_snapshot", "boss_inbox?select=pricing_snapshot&limit=1"],
     ["bookings.pricing_snapshot", "bookings?select=pricing_snapshot&limit=1"],
+    ["bookings.currency", "bookings?select=currency&limit=1"],
+    ["hotel_reference_catalog", "hotel_reference_catalog?select=hotel_name&limit=1"],
   ];
   for (const [label, path] of liveChecks) {
     const response = await fetch(`${url.replace(/\/$/, "")}/rest/v1/${path}`, {

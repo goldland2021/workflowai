@@ -127,6 +127,18 @@ const PricingCityRouteSchema = z
   })
   .strict();
 
+const CharterPricingPolicySchema = z
+  .object({
+    standardHours: numberFromInput(z.number().positive()),
+    standardDistanceKm: numberFromInput(z.number().positive()),
+    alphardBaseYen: numberFromInput(z.number().nonnegative()),
+    hiaceBaseYen: numberFromInput(z.number().nonnegative()),
+    fujiAlphardBaseYen: numberFromInput(z.number().nonnegative()),
+    fujiHiaceBaseYen: numberFromInput(z.number().nonnegative()),
+    fujiKeywords: z.array(z.string().min(1)),
+  })
+  .strict();
+
 export const PricingPolicySchema = z
   .object({
     engineVersion: z.string().min(1),
@@ -141,6 +153,7 @@ export const PricingPolicySchema = z
     airports: z.record(z.string(), PricingAirportRuleSchema),
     fixedRoutes: z.array(PricingFixedRouteSchema),
     cityRoutes: z.array(PricingCityRouteSchema).optional(),
+    charter: CharterPricingPolicySchema.optional(),
     interAirportFares: z.record(z.string(), numberFromInput(z.number().nonnegative())),
   })
   .strict();

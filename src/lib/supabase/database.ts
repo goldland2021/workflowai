@@ -9,6 +9,7 @@ import type {
   DriverDetails,
   EventType,
   FlightArrivalDetails,
+  HotelReference,
   PricingSnapshot,
   QuoteSuggestion,
   ReceiptRequest,
@@ -429,6 +430,47 @@ export async function getAiFailures(companyId: string, limit = 20): Promise<AiFa
 
 // ─── Structured conversation memory ───
 
+export async function getHotelReferenceCatalog(companyId: string): Promise<HotelReference[]> {
+  const response = await supabaseFetch(
+    `/rest/v1/hotel_reference_catalog?company_id=eq.${encodeURIComponent(companyId)}&active=eq.true&order=hotel_name.asc&limit=500`,
+  );
+  const rows = (await response.json()) as Array<{
+    id: string;
+    company_id: string;
+    hotel_name: string;
+    aliases: string[] | null;
+    city: string | null;
+    region: string | null;
+    star_rating: number | string | null;
+    nightly_rate_yen: number | null;
+    currency: string;
+    rate_basis: "manual" | "observed" | "average";
+    source_url: string | null;
+    observed_at: string | null;
+    charter_adjustment_yen: number;
+    notes: string | null;
+    active: boolean;
+  }>;
+
+  return rows.map((row) => ({
+    id: row.id,
+    companyId: row.company_id,
+    hotelName: row.hotel_name,
+    aliases: row.aliases ?? [],
+    city: row.city ?? undefined,
+    region: row.region ?? undefined,
+    starRating: row.star_rating === null ? undefined : Number(row.star_rating),
+    nightlyRateYen: row.nightly_rate_yen ?? undefined,
+    currency: row.currency,
+    rateBasis: row.rate_basis,
+    sourceUrl: row.source_url ?? undefined,
+    observedAt: row.observed_at ?? undefined,
+    charterAdjustmentYen: row.charter_adjustment_yen ?? 0,
+    notes: row.notes ?? undefined,
+    active: row.active,
+  }));
+}
+
 export type ConversationMemoryRow = {
   id: string;
   company_id: string;
@@ -723,7 +765,8 @@ export async function upsertBooking(
   conversationId: string,
   tripDetails: TripDetails,
   companyId: string,
-  existingBookingId?: string
+  existingBookingId?: string,
+  quote?: QuoteSuggestion,
 ): Promise<string> {
   const body: Record<string, unknown> = {
     conversation_id: conversationId,
@@ -756,6 +799,16 @@ export async function upsertBooking(
       }
     );
     return existingBookingId;
+  }
+
+  if (quote) {
+    body.currency = quote.currency;
+    body.included_fees = quote.includedFees;
+    body.pricing_snapshot = quote.pricing;
+    if (quote.approvalSource) {
+      body.approved_price = quote.suggestedPrice;
+      body.status = "ready";
+    }
   }
 
   const res = await supabaseFetch("/rest/v1/bookings?on_conflict=company_id,conversation_id", {
@@ -923,7 +976,7 @@ export function bookingRowToQuote(row: BookingRow): QuoteSuggestion | undefined 
     id: `quote_${row.id}`,
     serviceType: row.service_type as TripDetails["serviceType"] ?? undefined,
     suggestedPrice: row.approved_price,
-    currency: row.currency ?? "USD",
+    currency: row.currency ?? "JPY",
     vehicleType: row.vehicle_preference ?? undefined,
     includedFees: row.included_fees ?? ["Tolls", "Parking fees", "Taxes"],
     reason: "Owner-approved quote",
@@ -943,7 +996,7 @@ function rowToQuote(row: BossInboxRow | BookingRow): QuoteSuggestion | undefined
     id: `quote_${row.id}`,
     serviceType: undefined,
     suggestedPrice: price,
-    currency: row.currency ?? "USD",
+    currency: row.currency ?? "JPY",
     vehicleType: row.vehicle_type ?? undefined,
     includedFees: ["Tolls", "Parking fees", "Taxes"],
     reason: row.reason ?? "",
@@ -951,6 +1004,10 @@ function rowToQuote(row: BossInboxRow | BookingRow): QuoteSuggestion | undefined
     missingFields: [],
     pricing: row.pricing_snapshot ?? undefined,
   };
+}
+
+export function bossInboxRowToQuote(row: BossInboxRow): QuoteSuggestion | undefined {
+  return rowToQuote(row);
 }
 
 function rowToBossInboxItem(row: BossInboxRow): BossInboxItem {

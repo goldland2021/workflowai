@@ -51,15 +51,10 @@ export async function extractTripDetailsWithAI(
       temperature
     );
 
-    // Merge: LLM output overrides only when present
+    // Return a delta. The domain layer owns merging and confirmed-field protection.
     return {
-      ...current,
       ...extracted,
-      // Keep numbers as numbers
-      passengerCount: extracted.passengerCount ?? current.passengerCount,
-      luggageCount: extracted.luggageCount ?? current.luggageCount,
       specialRequests: [
-        ...(current.specialRequests || []),
         ...(extracted.specialRequests || []),
       ].filter((v, i, arr) => arr.indexOf(v) === i), // dedupe
     };

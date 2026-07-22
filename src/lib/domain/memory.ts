@@ -23,6 +23,17 @@ const memoryFields: Array<keyof TripDetails> = [
   "passengerCount",
   "luggageCount",
   "vehiclePreference",
+  "returnPickupLocation",
+  "returnDropoffLocation",
+  "returnTime",
+  "charterHours",
+  "routeStops",
+  "hotelName",
+  "hotelReferenceId",
+  "hotelStarRating",
+  "hotelNightlyRateYen",
+  "hotelTier",
+  "hotelCharterAdjustmentYen",
   "routeDistanceKm",
   "tollYen",
   "estimatedDriveTimeMinutes",
@@ -33,6 +44,10 @@ const memoryFields: Array<keyof TripDetails> = [
 const numericFields = new Set<keyof TripDetails>([
   "passengerCount",
   "luggageCount",
+  "charterHours",
+  "hotelStarRating",
+  "hotelNightlyRateYen",
+  "hotelCharterAdjustmentYen",
   "routeDistanceKm",
   "tollYen",
   "estimatedDriveTimeMinutes",
@@ -73,6 +88,10 @@ function coerceMemoryValue(field: keyof TripDetails, value: unknown): unknown {
   if (field === "specialRequests") {
     if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
     return typeof value === "string" ? [value] : undefined;
+  }
+
+  if (field === "routeStops") {
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
   }
 
   if (field === "flightArrival") {

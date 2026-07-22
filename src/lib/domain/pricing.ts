@@ -14,7 +14,7 @@ const DEFAULT_VEHICLES: Vehicle[] = [
     id: "vehicle_alphard",
     name: "Toyota Alphard",
     type: "Alphard",
-    capacity: { passengers: 6, luggage: 4 },
+    capacity: { passengers: 6, luggage: 6 },
   },
   {
     id: "vehicle_hiace",
@@ -97,6 +97,15 @@ export const DEFAULT_PRICING_POLICY: PricingPolicy = {
       oneWayYen: 40000,
     },
   ],
+  charter: {
+    standardHours: 10,
+    standardDistanceKm: 300,
+    alphardBaseYen: 60000,
+    hiaceBaseYen: 66000,
+    fujiAlphardBaseYen: 70000,
+    fujiHiaceBaseYen: 75000,
+    fujiKeywords: ["fuji", "mount fuji", "kawaguchiko", "gotemba", "yamanakako"],
+  },
   interAirportFares: {
     "haneda:narita": 25000,
     "narita:haneda": 25000,
@@ -130,6 +139,7 @@ function resolvePolicy(configuration: BusinessConfiguration): PricingPolicy {
     airports: configuration.pricingPolicy.airports ?? DEFAULT_PRICING_POLICY.airports,
     fixedRoutes: configuration.pricingPolicy.fixedRoutes ?? DEFAULT_PRICING_POLICY.fixedRoutes,
     cityRoutes: configuration.pricingPolicy.cityRoutes ?? DEFAULT_PRICING_POLICY.cityRoutes,
+    charter: configuration.pricingPolicy.charter ?? DEFAULT_PRICING_POLICY.charter,
     interAirportFares: configuration.pricingPolicy.interAirportFares ?? DEFAULT_PRICING_POLICY.interAirportFares,
   };
 }
@@ -202,10 +212,13 @@ function chooseVehicle(trip: TripDetails, configuration: BusinessConfiguration):
 } {
   const vehicles = configuration.vehicles?.length ? configuration.vehicles : DEFAULT_VEHICLES;
   const passengerCount = trip.passengerCount ?? 0;
-  const luggageCount = trip.luggageBreakdown
+  const checkedLuggageCount = trip.luggageBreakdown
     ? (trip.luggageBreakdown.large ?? 0) +
       (trip.luggageBreakdown.medium ?? 0) +
-      (trip.luggageBreakdown.small ?? 0) || trip.luggageBreakdown.total
+      (trip.luggageBreakdown.small ?? 0)
+    : 0;
+  const luggageCount = trip.luggageBreakdown
+    ? checkedLuggageCount || trip.luggageBreakdown.total
     : trip.luggageCount ?? 0;
   const preference = normalize(trip.vehiclePreference);
   const requestedHiace = /hiace|海狮|海獅|van|大型|面包|麵包/.test(preference);
@@ -214,25 +227,31 @@ function chooseVehicle(trip: TripDetails, configuration: BusinessConfiguration):
   const hiace = vehicles.find((vehicle) => /hiace|海狮|海獅|van/i.test(`${vehicle.type}${vehicle.name}`));
   const preferred = requestedHiace ? hiace : requestedAlphard ? alphard : undefined;
   const sorted = [...vehicles].sort((a, b) => a.capacity.passengers - b.capacity.passengers);
+  const luggageCapacity = (vehicle: Vehicle): number =>
+    /alphard/i.test(`${vehicle.type}${vehicle.name}`) && passengerCount > 3
+      ? Math.min(vehicle.capacity.luggage, 4)
+      : vehicle.capacity.luggage;
   const fitting = sorted.find((vehicle) =>
-    vehicle.capacity.passengers >= passengerCount && vehicle.capacity.luggage >= luggageCount,
+    vehicle.capacity.passengers >= passengerCount && luggageCapacity(vehicle) >= luggageCount,
   );
   const vehicle = preferred ?? fitting ?? hiace ?? sorted[sorted.length - 1] ?? DEFAULT_VEHICLES[0];
   const count = Math.max(
     1,
     Math.ceil(passengerCount / Math.max(vehicle.capacity.passengers, 1)),
-    Math.ceil(luggageCount / Math.max(vehicle.capacity.luggage, 1)),
+    Math.ceil(luggageCount / Math.max(luggageCapacity(vehicle), 1)),
   );
+  const effectiveLuggageCapacity = luggageCapacity(vehicle);
 
   return {
     vehicle,
     count,
-    capacityExceeded: passengerCount > vehicle.capacity.passengers * count || luggageCount > vehicle.capacity.luggage * count,
+    capacityExceeded: passengerCount > vehicle.capacity.passengers * count || luggageCount > effectiveLuggageCapacity * count,
   };
 }
 
 function specialPricingRequest(trip: TripDetails): boolean {
   const text = `${trip.serviceType ?? ""} ${(trip.specialRequests ?? []).join(" ")}`.toLowerCase();
+  if (/[\u6298\u6263\u4fbf\u5b9c\u7279\u4ef7\u5f80\u8fd4\u591a\u6bb5\u5305\u8f66\u5305\u8eca\u52a0\u7ad9]/u.test(text)) return true;
   return /discount|cheaper|special price|round trip|return|multi|itinerary|day tour|hourly|extra stop|折扣|便宜|特价|往返|多段|包车|加站/.test(text) ||
     /\b(today|tonight|same[- ]day|asap|urgent)\b/.test(text);
 }
@@ -265,6 +284,9 @@ export function calculateWorkflowQuote(
   trip: TripDetails,
   configuration: BusinessConfiguration,
 ): WorkflowQuoteResult | undefined {
+  if (trip.serviceType === "day_tour" || trip.serviceType === "hourly_charter" || trip.serviceType === "multi_leg_itinerary") {
+    return calculateCharterQuote(trip, configuration);
+  }
   if (trip.serviceType === "city_transfer" || trip.serviceType === "round_trip") {
     return calculateCityTransferQuote(trip, configuration);
   }
@@ -364,6 +386,79 @@ export function calculateWorkflowQuote(
       `${vehicle.name}${count > 1 ? ` × ${count}` : ""}`,
       reason ? `owner review: ${reason}` : "eligible for standard policy quote",
     ].join("; "),
+    pricing,
+  };
+}
+
+function calculateCharterQuote(
+  trip: TripDetails,
+  configuration: BusinessConfiguration,
+): WorkflowQuoteResult | undefined {
+  const policy = resolvePolicy(configuration);
+  const charter = policy.charter ?? DEFAULT_PRICING_POLICY.charter!;
+  const { vehicle, count, capacityExceeded } = chooseVehicle(trip, configuration);
+  const routeText = [
+    trip.pickupLocation,
+    trip.dropoffLocation,
+    ...(trip.routeStops ?? []),
+    ...(trip.specialRequests ?? []),
+  ].filter(Boolean).join(" ");
+  const isFujiRoute = charter.fujiKeywords.some((keyword) => normalize(routeText).includes(normalize(keyword)));
+  const isHiace = /hiace|娴风嫯|娴风崊|van/i.test(`${vehicle.type}${vehicle.name}`);
+  const unitBasePrice = isFujiRoute
+    ? (isHiace ? charter.fujiHiaceBaseYen : charter.fujiAlphardBaseYen)
+    : (isHiace ? charter.hiaceBaseYen : charter.alphardBaseYen);
+  const hotelAdjustment = trip.hotelCharterAdjustmentYen ?? 0;
+  const unitPriceYen = roundTo1000(unitBasePrice + hotelAdjustment);
+  const totalPriceYen = unitPriceYen * count;
+  const hoursKnown = typeof trip.charterHours === "number" && trip.charterHours > 0;
+  const routeDistanceKnown = typeof trip.routeDistanceKm === "number" && trip.routeDistanceKm > 0;
+  const exceedsStandardHours = hoursKnown && trip.charterHours! > charter.standardHours;
+  const exceedsStandardDistance = routeDistanceKnown && trip.routeDistanceKm! > charter.standardDistanceKm;
+  const confidence = exceedsStandardHours || exceedsStandardDistance ? 78 : isFujiRoute ? 95 : 94;
+  const approvalReasonText = capacityExceeded
+    ? "Vehicle capacity is not sufficient for the requested passengers or luggage."
+    : count > 1
+      ? "Multiple vehicles require owner confirmation."
+      : exceedsStandardHours
+        ? `Charter time exceeds the standard ${charter.standardHours} hours.`
+        : exceedsStandardDistance
+          ? `Route distance exceeds the standard ${charter.standardDistanceKm} km.`
+          : confidence < policy.autoQuoteMinConfidence
+            ? "Pricing confidence is below the automatic quote threshold."
+            : undefined;
+  const matchedRuleId = isFujiRoute
+    ? (isHiace ? "charter-fuji-hiace" : "charter-fuji-alphard")
+    : (isHiace ? "charter-standard-hiace" : "charter-standard-alphard");
+  const pricing: PricingSnapshot = {
+    engineVersion: policy.engineVersion,
+    source: "charter_rule",
+    confidence,
+    confidenceBand: confidenceBand(confidence),
+    approvalRequired: Boolean(approvalReasonText),
+    approvalReason: approvalReasonText,
+    routeDistanceKm: trip.routeDistanceKm,
+    tollYen: trip.tollYen,
+    waitingMinutes: 0,
+    matchedRuleId,
+    vehicleType: vehicle.name,
+    vehicleCount: count,
+    unitPriceYen,
+    totalPriceYen,
+    priceLowYen: totalPriceYen,
+    priceHighYen: totalPriceYen + policy.priceBufferYen * count,
+  };
+
+  return {
+    priceYen: totalPriceYen,
+    vehicleType: count > 1 ? `${count} × ${vehicle.name}` : vehicle.name,
+    reason: [
+      `Charter rule: ${charter.standardHours} hours / ${charter.standardDistanceKm} km standard`,
+      isFujiRoute ? "Fuji-area route" : "standard charter route",
+      `${vehicle.name}${count > 1 ? ` × ${count}` : ""}`,
+      hotelAdjustment > 0 ? `hotel reference adjustment +JPY ${hotelAdjustment.toLocaleString()}` : undefined,
+      approvalReasonText ? `owner review: ${approvalReasonText}` : "eligible for standard policy quote",
+    ].filter(Boolean).join("; "),
     pricing,
   };
 }

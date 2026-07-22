@@ -322,7 +322,7 @@ Available services: ${params.servicesJson}
 Available vehicles:
 ${params.vehiclesJson}
 
-Extract and update any new trip details from the customer message. Only include fields explicitly mentioned or confidently inferred. Return partial data, don\'t fabricate values.`,
+Extract and update any new trip details from the customer message. For a private charter, day tour, or multi-stop itinerary, detect the service type, charter hours, pickup/drop-off locations, and named route stops. If a hotel is mentioned, preserve its exact name in hotelName. Only include fields explicitly mentioned or confidently inferred. Return partial data, don\'t fabricate values.`,
     temperature: 0.1,
   };
 }

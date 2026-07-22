@@ -18,6 +18,7 @@ import {
   getFastFaqReply,
   getFastFlightArrivalReply,
   getFastOperationalReply,
+  mergeTripDetails,
 } from "./ai-workflow";
 import { airportTransferConfiguration } from "./airport-transfer";
 import type { DetectedEvent, TripDetails } from "./types";
@@ -71,6 +72,115 @@ describe("getFastFaqReply", () => {
 });
 
 describe("analyzeCustomerTurn - quote suggestion rules", () => {
+  it("treats a labelled English widget form as authoritative structured state", async () => {
+    const result = await analyzeCustomerTurn({
+      message: [
+        "Airport: Haneda Airport (HND)",
+        "Flight number: PR422",
+        "Landing time: July 23, 1:35pm",
+        "Hotel or address: 6-chōme-20-3 Nishikasai, Edogawa City, Tokyo 134-0088, Japan",
+        "Passengers: 4",
+        "Luggage: 8",
+        "Vehicle: Toyota Hiace",
+      ].join("\n"),
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails).toMatchObject({
+      serviceType: "airport_pickup",
+      pickupLocation: "Haneda Airport (HND)",
+      dropoffLocation: "6-chōme-20-3 Nishikasai, Edogawa City, Tokyo 134-0088, Japan",
+      airport: "Haneda",
+      date: "July 23",
+      time: "1:35 PM",
+      flightNumber: "PR422",
+      passengerCount: 4,
+      luggageCount: 8,
+      vehiclePreference: "Toyota HiAce",
+    });
+    expect(result.quote?.currency).toBe("JPY");
+    expect(result.quote?.vehicleType).toContain("HiAce");
+    expect(result.detectedEvents).not.toContainEqual(expect.objectContaining({ eventType: "Discount Request" }));
+  });
+
+  it("updates only the changed luggage field without creating a discount approval", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "Luggage: 4 how much?",
+      currentTripDetails: {
+        serviceType: "airport_pickup",
+        pickupLocation: "Haneda Airport (HND)",
+        dropoffLocation: "6-chōme-20-3 Nishikasai, Edogawa City, Tokyo",
+        airport: "Haneda",
+        date: "July 23",
+        time: "1:35 PM",
+        flightNumber: "PR422",
+        passengerCount: 4,
+        luggageCount: 8,
+        vehiclePreference: "Toyota HiAce",
+      },
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails.passengerCount).toBe(4);
+    expect(result.tripDetails.luggageCount).toBe(4);
+    expect(result.detectedEvents).not.toContainEqual(expect.objectContaining({ eventType: "Discount Request" }));
+  });
+
+  it("does not let model extraction overwrite confirmed trip facts", () => {
+    const result = mergeTripDetails(
+      {
+        serviceType: "airport_pickup",
+        pickupLocation: "Narita Airport",
+        dropoffLocation: "The Ritz-Carlton Tokyo",
+        passengerCount: 2,
+      },
+      "What is the price?",
+      {
+        serviceType: "city_transfer",
+        pickupLocation: "Haneda Airport",
+        dropoffLocation: "Another hotel",
+        passengerCount: 6,
+      },
+    );
+
+    expect(result).toMatchObject({
+      serviceType: "airport_pickup",
+      pickupLocation: "Narita Airport",
+      dropoffLocation: "The Ritz-Carlton Tokyo",
+      passengerCount: 2,
+    });
+  });
+
+  it("recognizes a Chinese charter itinerary and uses the charter price book", async () => {
+    const result = await analyzeCustomerTurn({
+      message: [
+        "这是一个包车订单",
+        "接车地点：小田原站",
+        "接车时间：下午1:00",
+        "计划景点：箱根神社、大涌谷",
+        "送达地点：HOTEL CLAD",
+        "预计到达：晚上7:00",
+        "乘客人数：4人",
+        "行李：0件",
+      ].join("\n"),
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails.serviceType).toBe("day_tour");
+    expect(result.tripDetails.pickupLocation).toBe("小田原站");
+    expect(result.tripDetails.dropoffLocation).toBe("HOTEL CLAD");
+    expect(result.tripDetails.passengerCount).toBe(4);
+    expect(result.tripDetails.charterHours).toBe(6);
+    expect(result.tripDetails.routeStops).toEqual(["箱根神社", "大涌谷"]);
+    expect(result.quote?.suggestedPrice).toBe(60000);
+    expect(result.quote?.pricing?.source).toBe("charter_rule");
+  });
+
   it("provides a quote before pickup time is known", async () => {
     const result = await analyzeCustomerTurn({
       message: "Please quote Narita Airport to The Ritz-Carlton Tokyo for 2 passengers with 2 suitcases.",
