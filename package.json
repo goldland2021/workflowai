@@ -10,7 +10,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "check:migrations": "node scripts/check-migrations.mjs"
+    "check:migrations": "node scripts/check-migrations.mjs",
+    "eval:live": "node scripts/eval-live.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.8",

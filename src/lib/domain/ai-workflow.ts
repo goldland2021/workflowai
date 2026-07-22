@@ -17,12 +17,14 @@ import {
   detectEventsWithAI,
   extractContactWithAI,
 } from "../ai/extract";
-import { formatCustomerQuoteNotice, generateAiReplyWithAI } from "../ai/reply";
+import { formatCustomerQuoteNotice, generateAiReplyWithAI, replyLanguageMatches } from "../ai/reply";
 import { hasRealAI } from "../ai";
+import { isOrchestratorEnabled } from "../ai/flags";
+import { orchestrateTurn } from "../ai/orchestrate";
 import { redactContactDetails } from "../ai/pii";
 import { resolveConversationLang, type PromptLang } from "../ai/prompts/templates";
 import { formatFlightArrivalDetails } from "../flight/arrival";
-import { calculateWorkflowQuote } from "./pricing";
+import { resolveAuthoritativeQuote } from "./pricing-guardrail";
 import { extractDateText, extractLabeledTripFields, normalizeTripDetails } from "./trip-state";
 import { buildConversationWorksheet } from "./conversation-worksheet";
 
@@ -259,16 +261,49 @@ export async function analyzeCustomerTurn(params: {
   let tripDetails: TripDetails;
   let contact: CapturedContact | undefined;
   let detectedEvents: DetectedEvent[];
+  // Reply drafted by the single-call orchestrator, if that path ran. Undefined
+  // means the reply is produced later by the legacy reply generator.
+  let orchestratorReplyDraft: string | undefined;
   const deterministicContact = extractContact(params.message);
   const promptMessage = redactContactDetails(params.message);
 
   if (hasRealAI) {
-    // Prefer real LLM with structured outputs (per project architecture rules)
-    const [aiTripDetails, aiContact, aiDetectedEvents] = await Promise.all([
-      extractTripDetailsWithAI(promptMessage, workingTripDetails, params.configuration),
-      deterministicContact ? Promise.resolve(undefined) : extractContactWithAI(params.message),
-      detectEventsWithAI(promptMessage, params.configuration),
-    ]);
+    let aiTripDetails: TripDetails | undefined = undefined;
+    let aiContact: CapturedContact | undefined = undefined;
+    let aiDetectedEvents: DetectedEvent[] = [];
+
+    // Phase 1: single-call orchestrator (flagged). On any failure, fall back to
+    // the legacy multi-call extraction within the same turn so a turn is never
+    // dropped just because the orchestrator errored.
+    let orchestrated = false;
+    if (isOrchestratorEnabled()) {
+      try {
+        const turn = await orchestrateTurn({
+          message: promptMessage,
+          currentTripDetails: workingTripDetails,
+          configuration: params.configuration,
+          recentMessages: params.recentMessages,
+          lang,
+        });
+        aiTripDetails = turn.tripDetailsDelta;
+        aiContact = turn.contact;
+        aiDetectedEvents = turn.detectedEvents;
+        orchestratorReplyDraft = turn.replyDraft;
+        orchestrated = true;
+      } catch {
+        console.warn("Orchestrator turn failed, falling back to legacy extraction");
+      }
+    }
+
+    if (!orchestrated) {
+      // Legacy path: three structured outputs in parallel.
+      [aiTripDetails, aiContact, aiDetectedEvents] = await Promise.all([
+        extractTripDetailsWithAI(promptMessage, workingTripDetails, params.configuration),
+        deterministicContact ? Promise.resolve(undefined) : extractContactWithAI(params.message),
+        detectEventsWithAI(promptMessage, params.configuration),
+      ]);
+    }
+
     // Keep critical booking fields deterministic while preserving the model's
     // extracted fields on top of the already persisted trip details.
     tripDetails = mergeTripDetails(
@@ -278,7 +313,7 @@ export async function analyzeCustomerTurn(params: {
       { locationPrompted: hasRecentLocationPrompt(params.recentMessages) },
     );
     contact = deterministicContact ?? aiContact;
-    detectedEvents = aiDetectedEvents;
+    detectedEvents = aiDetectedEvents ?? [];
   } else {
     // Fallback to original rule-based logic
     tripDetails = mergeTripDetails(
@@ -291,9 +326,14 @@ export async function analyzeCustomerTurn(params: {
     detectedEvents = detectEvents(params.message);
   }
 
-  // The application owns event boundaries. Structured model output is useful,
-  // but high-impact event types still require explicit customer intent.
-  detectedEvents = filterDetectedEventsForMessage(params.message, detectedEvents);
+  // The application owns event boundaries for the LEGACY detector (keyword-based,
+  // prone to false positives). The orchestrator is already instructed on intent
+  // and returns well-scoped events, so re-filtering it here only deletes correct
+  // events (e.g. a rephrased time change). Trust orchestrator events; still guard
+  // the legacy path.
+  if (orchestratorReplyDraft === undefined) {
+    detectedEvents = filterDetectedEventsForMessage(params.message, detectedEvents);
+  }
 
   if (params.routeEnricher) {
     try {
@@ -316,16 +356,20 @@ export async function analyzeCustomerTurn(params: {
   const missingBookingFields = worksheet.missingForBooking;
 
   // Pricing is owned by configured business rules, never invented by the
-  // model. This also removes an entire sequential LLM round trip.
-  const quoteUsesApprovedPrice = Boolean(
-    params.approvedQuote && !hasQuoteRelevantTripChanges(workingTripDetails, tripDetails),
-  );
-  const quote = quoteUsesApprovedPrice
-    ? params.approvedQuote
-    : maybeCreateQuoteSuggestion(tripDetails, params.configuration, missingFields);
-  const quoteAutoApproved = Boolean(
-    quote && !quoteUsesApprovedPrice && quote.pricing?.approvalRequired === false,
-  );
+  // model. Delegated to the shared pricing guardrail so the legacy path and the
+  // orchestrator resolve prices and approval state identically.
+  const resolvedQuote = resolveAuthoritativeQuote({
+    workingTripDetails,
+    tripDetails,
+    configuration: params.configuration,
+    missingFields,
+    approvedQuote: params.approvedQuote,
+  });
+  // Option A: a bare acknowledgement must not re-surface a quote or booking item.
+  const suppressQuote = isBareAcknowledgement(params.message);
+  const quote = suppressQuote ? undefined : resolvedQuote.quote;
+  const quoteUsesApprovedPrice = suppressQuote ? false : resolvedQuote.quoteApproved;
+  const quoteAutoApproved = suppressQuote ? false : resolvedQuote.quoteAutoApproved;
 
   const bossInboxItems = createBossInboxItems({
     detectedEvents,
@@ -343,7 +387,35 @@ export async function analyzeCustomerTurn(params: {
   });
 
   let aiMessage: ConversationMessage;
-  if (hasRealAI) {
+  if (hasRealAI && orchestratorReplyDraft !== undefined) {
+    // The orchestrator already drafted the reply in the same call. Apply the
+    // same price/language guardrail: the model never states a price, so inject
+    // the authoritative quote here; if the draft is empty or off-language, fall
+    // back to the deterministic message builder (no extra LLM round trip).
+    aiMessage = buildOrchestratedAiMessage({
+      draft: orchestratorReplyDraft,
+      lang,
+      quote,
+      quoteApproved: quoteUsesApprovedPrice,
+      quoteAutoApproved,
+      createdAt: now.toISOString(),
+      buildFallback: () =>
+        createAiMessage({
+          customerMessage: params.message,
+          tripDetails,
+          contact,
+          detectedEvents,
+          missingFields,
+          quote,
+          quoteApproved: quoteUsesApprovedPrice,
+          quoteAutoApproved,
+          missingBookingFields,
+          configuration: params.configuration,
+          lang,
+          createdAt: now.toISOString(),
+        }),
+    });
+  } else if (hasRealAI) {
     const text = await generateAiReplyWithAI({
       customerMessage: promptMessage,
       tripDetails,
@@ -803,87 +875,6 @@ function detectEvents(message: string): DetectedEvent[] {
     }));
 }
 
-function maybeCreateQuoteSuggestion(
-  tripDetails: TripDetails,
-  configuration: BusinessConfiguration,
-  missingFields: TripFieldKey[],
-): QuoteSuggestion | undefined {
-  if (missingFields.length > 0) return undefined;
-
-  const workflowQuote = calculateWorkflowQuote(tripDetails, configuration);
-  if (workflowQuote) {
-    return {
-      id: `quote_${Date.now()}`,
-      serviceType: tripDetails.serviceType,
-      suggestedPrice: workflowQuote.priceYen,
-      currency: configuration.pricingPolicy?.currency ?? "JPY",
-      vehicleType: workflowQuote.vehicleType,
-      includedFees: ["Tolls", "Parking fees", "Taxes"],
-      routeDistanceKm: tripDetails.routeDistanceKm,
-      estimatedDriveTimeMinutes: tripDetails.estimatedDriveTimeMinutes,
-      reason: workflowQuote.reason,
-      confidence: workflowQuote.pricing.confidence,
-      missingFields,
-      approvalSource: workflowQuote.pricing.approvalRequired ? undefined : "pricing_policy",
-      pricing: workflowQuote.pricing,
-    };
-  }
-
-  const wantsLargeVehicle =
-    tripDetails.vehiclePreference?.includes("海狮") || tripDetails.vehiclePreference?.toLowerCase().includes("van") ||
-    (tripDetails.passengerCount ?? 0) >= 4 ||
-    (tripDetails.luggageCount ?? 0) >= 4;
-
-  const pricingRule = wantsLargeVehicle
-    ? configuration.pricingRules.find((rule) => rule.id === "price_van_airport")
-    : configuration.pricingRules.find((rule) => rule.id === "price_standard_airport");
-
-  if (!pricingRule) return undefined;
-
-  return {
-    id: `quote_${Date.now()}`,
-    serviceType: tripDetails.serviceType,
-    suggestedPrice: pricingRule.basePrice,
-    currency: pricingRule.currency,
-    vehicleType: wantsLargeVehicle ? "丰田海狮" : "丰田阿尔法",
-    includedFees: ["Tolls", "Parking fees", "Taxes"],
-    routeDistanceKm: tripDetails.routeDistanceKm,
-    estimatedDriveTimeMinutes: tripDetails.estimatedDriveTimeMinutes,
-    reason: `${pricingRule.label} applies based on route details, passengers, and luggage.`,
-    confidence: wantsLargeVehicle ? 88 : 82,
-    missingFields,
-  };
-}
-
-function hasQuoteRelevantTripChanges(current: TripDetails, next: TripDetails): boolean {
-  const fields: Array<keyof TripDetails> = [
-    "serviceType",
-    "pickupLocation",
-    "dropoffLocation",
-    "airport",
-    "terminal",
-    "date",
-    "time",
-    "flightNumber",
-    "passengerCount",
-    "luggageCount",
-    "luggageBreakdown",
-    "vehiclePreference",
-    "returnPickupLocation",
-    "returnDropoffLocation",
-    "returnTime",
-    "charterHours",
-    "routeStops",
-  ];
-
-  return fields.some((field) => {
-    if (field === "luggageBreakdown") {
-      return JSON.stringify(current[field]) !== JSON.stringify(next[field]);
-    }
-    return current[field] !== next[field];
-  });
-}
-
 function createBossInboxItems(params: {
   detectedEvents: DetectedEvent[];
   quote?: QuoteSuggestion;
@@ -941,6 +932,46 @@ function createBossInboxItems(params: {
       : [];
 
   return [...eventItems, ...quoteItem];
+}
+
+/**
+ * Finalize the orchestrator's reply draft under the same guardrail the legacy
+ * reply path uses: the model never states a price, so the authoritative quote
+ * is appended here when the draft omits it. If the draft is empty or not in the
+ * conversation language, fall back to the deterministic builder (no LLM call).
+ */
+function buildOrchestratedAiMessage(params: {
+  draft: string;
+  lang: PromptLang;
+  quote?: QuoteSuggestion;
+  quoteApproved: boolean;
+  quoteAutoApproved: boolean;
+  createdAt: string;
+  buildFallback: () => ConversationMessage;
+}): ConversationMessage {
+  const draft = params.draft.trim();
+  if (!draft || !replyLanguageMatches(draft, params.lang)) {
+    return params.buildFallback();
+  }
+
+  let text = draft;
+  if (params.quote) {
+    const normalized = text.replace(/[\s,]/g, "");
+    if (!normalized.includes(String(params.quote.suggestedPrice))) {
+      text = `${text}\n\n${formatCustomerQuoteNotice(params.lang, params.quote, {
+        approved: params.quoteApproved,
+        autoApproved: params.quoteAutoApproved,
+      })}`;
+    }
+  }
+
+  return {
+    id: `msg_ai_${Date.now()}`,
+    role: "ai",
+    text,
+    createdAt: params.createdAt,
+    channel: "website_widget",
+  };
 }
 
 function createAiMessage(params: {
@@ -1055,6 +1086,24 @@ function extractContact(message: string): CapturedContact | undefined {
   if (whatsapp) return { method: "WhatsApp", value: whatsapp[1].trim() };
 
   return undefined;
+}
+
+/**
+ * A content-free acknowledgement ("ok got it, thanks") should not re-surface a
+ * quote or booking. Matches only when the WHOLE message is acknowledgement
+ * tokens and there is no question. (Option A of the ack-no-repeat decision.)
+ */
+function isBareAcknowledgement(message: string): boolean {
+  if (/[?？]/u.test(message)) return false;
+  const compact = message
+    .toLowerCase()
+    .replace(/[.!,，。！？?、~]+/gu, " ")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\uFE0F]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (!compact) return false;
+  const token = "(?:ok|okay|k|got it|noted|well noted|received|no problem|np|thanks|thank you|thx|cheers|great|perfect|sure|alright|all right|sounds good|good|fine|understood|so much|a lot|then|收到|好的|好|了解|明白|谢谢|多谢|感谢|沒問題|没问题)";
+  return new RegExp(`^${token}(?:\\s+${token})*$`, "u").test(compact);
 }
 
 function hasPurchaseIntent(message: string): boolean {

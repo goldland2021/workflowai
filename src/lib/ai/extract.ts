@@ -1,4 +1,4 @@
-import { generateStructured } from './client';
+import { generateStructured, extractModel } from './client';
 import { TripDetailsSchema, DetectedEventSchema, QuoteSuggestionSchema, ContactSchema } from './schemas';
 import { z } from 'zod';
 import type { BusinessConfiguration, TripDetails, DetectedEvent, QuoteSuggestion, CapturedContact, TripFieldKey } from '../domain/types';
@@ -48,7 +48,8 @@ export async function extractTripDetailsWithAI(
       TripDetailsSchema,
       prompt,
       system,
-      temperature
+      temperature,
+      extractModel,
     );
 
     // Return a delta. The domain layer owns merging and confirmed-field protection.
@@ -87,7 +88,8 @@ export async function detectEventsWithAI(
       z.array(DetectedEventSchema),
       prompt,
       system,
-      temperature
+      temperature,
+      extractModel,
     );
 
     return events.map((ev, i) => ({
@@ -112,7 +114,8 @@ export async function extractContactWithAI(message: string): Promise<CapturedCon
       ContactSchema.nullable(),
       prompt,
       system,
-      temperature
+      temperature,
+      extractModel,
     );
     return contact || undefined;
   } catch {

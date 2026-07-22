@@ -25,7 +25,22 @@ const openai = createOpenAI({
 
 const usesOpenAICompatibleChat = Boolean(baseURL);
 
-export const model = usesOpenAICompatibleChat ? openai.chat(modelName) : openai(modelName);
+function buildModel(name: string) {
+  return usesOpenAICompatibleChat ? openai.chat(name) : openai(name);
+}
+
+// Role-based models. The orchestrator benefits from a stronger model (better
+// multilingual reasoning and reply quality); structured extraction can run on a
+// cheaper model. Both fall back to the base LLM_MODEL when unset, so existing
+// deployments are unchanged until the new vars are provided.
+const orchestratorModelName = process.env.LLM_MODEL_ORCHESTRATOR || modelName;
+const extractModelName = process.env.LLM_MODEL_EXTRACT || modelName;
+
+export const model = buildModel(modelName);
+export const orchestratorModel = buildModel(orchestratorModelName);
+export const extractModel = buildModel(extractModelName);
+
+type ChatModel = ReturnType<typeof buildModel>;
 
 export const hasRealAI = hasServerAIProvider();
 
@@ -33,18 +48,20 @@ export async function generateStructured<Schema extends z.ZodTypeAny>(
   schema: Schema,
   prompt: string,
   system?: string,
-  temperature?: number
+  temperature?: number,
+  modelOverride?: ChatModel,
 ): Promise<z.infer<Schema>> {
   if (!hasRealAI) {
     throw new Error('No LLM configured. Falling back to rule-based logic.');
   }
 
+  const activeModel = modelOverride ?? model;
   const baseSystem = system || '你是一个精准专业的机场接送公司 AI 助手。请始终返回有效的结构化数据。所有输出使用中文。';
   const temp = temperature ?? 0.2;
 
   if (usesOpenAICompatibleChat) {
     const result = await generateText({
-      model,
+      model: activeModel,
       prompt: `${prompt}
 
 请只返回一个可被 JSON.parse 解析的 JSON 值。不要使用 Markdown。不要添加解释。不要添加代码块。字段名必须使用英文 camelCase。`,
@@ -58,7 +75,7 @@ export async function generateStructured<Schema extends z.ZodTypeAny>(
   }
 
   const result = await generateObject({
-    model,
+    model: activeModel,
     schema,
     prompt,
     system: baseSystem,
@@ -71,13 +88,15 @@ export async function generateStructured<Schema extends z.ZodTypeAny>(
 export async function generateReply(
   prompt: string,
   system?: string,
-  temperature?: number
+  temperature?: number,
+  modelOverride?: ChatModel,
 ): Promise<string> {
   if (!hasRealAI) {
     throw new Error('No LLM configured');
   }
 
-  const baseSystem = system || 
+  const activeModel = modelOverride ?? model;
+  const baseSystem = system ||
     '你是一个专业的机场接送 AI 客服员工（天桥机场接送）。' +
     '你的目标是高效收集完整接送信息、捕捉联系方式、检测需老板审核的事件。' +
     '回复必须简洁（默认1句、最多2句或约35字）、专业、用中文、自然像真人客服。' +
@@ -85,7 +104,7 @@ export async function generateReply(
   const temp = temperature ?? 0.7;
 
   const result = await generateText({
-    model,
+    model: activeModel,
     prompt,
     system: baseSystem,
     temperature: temp,
