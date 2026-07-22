@@ -659,7 +659,13 @@ export function mergeTripDetails(
     next.dropoffLocation = cleanText(message);
   }
 
-  if (lower.includes("airport") && !next.pickupLocation && !lower.includes("drop")) {
+  if (
+    lower.includes("airport") &&
+    !next.pickupLocation &&
+    !lower.includes("drop") &&
+    next.serviceType !== "airport_dropoff" &&
+    !next.hotelName
+  ) {
     next.pickupLocation = "Airport";
   }
 
@@ -771,6 +777,9 @@ export function mergeTripDetails(
   }
   if (normalized.serviceType === "airport_pickup" && (normalized.flightNumber || normalized.airport) && !normalized.pickupLocation) {
     normalized.pickupLocation = normalized.airport ? `${normalized.airport} Airport` : "Airport";
+  }
+  if (normalized.serviceType === "airport_dropoff" && !normalized.pickupLocation && normalized.hotelName) {
+    normalized.pickupLocation = normalized.hotelName;
   }
 
   return normalized;

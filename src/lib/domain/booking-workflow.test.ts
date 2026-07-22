@@ -44,6 +44,19 @@ describe("getMissingQuoteFields", () => {
     expect(getMissingQuoteFields(tripDetails)).toEqual([]);
     expect(getMissingBookingFields(tripDetails)).toEqual(["date", "time"]);
   });
+
+  it("treats a hotel as the temporary pickup reference for an airport drop-off", () => {
+    const tripDetails: TripDetails = {
+      serviceType: "airport_dropoff",
+      airport: "Narita",
+      dropoffLocation: "Narita Airport",
+      hotelName: "Hotel Gracery Shinjuku",
+      passengerCount: 2,
+    };
+
+    expect(getMissingQuoteFields(tripDetails)).toEqual([]);
+    expect(getMissingBookingFields(tripDetails)).toEqual(["date", "time"]);
+  });
 });
 
 describe("createBookingSummary - owner approval is required for a final price", () => {

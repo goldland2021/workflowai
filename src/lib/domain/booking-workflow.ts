@@ -35,6 +35,13 @@ function isFieldMissingForEstimate(tripDetails: TripDetails, field: TripFieldKey
   if (field !== "pickupLocation") return !tripDetails[field];
   if (tripDetails.pickupLocation) return false;
 
+  const hotelContext = Boolean(
+    tripDetails.hotelName ||
+      tripDetails.hotelReferenceId ||
+      /hotel|resort|ryokan|address|酒店|住宿|地址/iu.test(tripDetails.dropoffLocation ?? ""),
+  );
+  if (tripDetails.serviceType === "airport_dropoff" && hotelContext) return false;
+
   const airportTransfer = Boolean(
     tripDetails.serviceType === "airport_pickup" ||
       tripDetails.serviceType === "airport_dropoff" ||

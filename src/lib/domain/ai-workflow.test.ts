@@ -690,6 +690,25 @@ describe("analyzeCustomerTurn - multi-turn trip state", () => {
     expect(result.aiMessage.text).not.toMatch(/pickup location|上车地点/iu);
   });
 
+  it("uses a known hotel as the temporary pickup reference for airport drop-off", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "How much for the airport transfer?",
+      currentTripDetails: {
+        serviceType: "airport_dropoff",
+        airport: "Narita",
+        dropoffLocation: "Narita Airport",
+        hotelName: "Hotel Gracery Shinjuku",
+        passengerCount: 2,
+      },
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails.pickupLocation).toBe("Hotel Gracery Shinjuku");
+    expect(result.quote?.suggestedPrice).toBeGreaterThan(0);
+    expect(result.aiMessage.text).not.toMatch(/pickup location|pick-up location|上车地点/iu);
+  });
+
   it("keeps Mt. Fuji intact and extracts charter hours and distance", async () => {
     const result = await analyzeCustomerTurn({
       message: "Please quote a private charter from Tokyo to Mt. Fuji, 10 hours and about 350 km, for 4 passengers with 2 suitcases.",
