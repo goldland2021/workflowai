@@ -621,6 +621,58 @@ describe("analyzeCustomerTurn - multi-turn trip state", () => {
     expect(result.tripDetails.flightTime).toBeUndefined();
   });
 
+  it("builds an airport estimate from a flight number and hotel without exact pickup details", async () => {
+    const result = await analyzeCustomerTurn({
+      message: [
+        "Flight UA8011.",
+        "My hotel address is The Ritz-Carlton Tokyo.",
+        "2 passengers and 2 suitcases.",
+      ].join(" "),
+      currentTripDetails: {},
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails).toMatchObject({
+      serviceType: "airport_pickup",
+      pickupLocation: "Airport",
+      dropoffLocation: "The Ritz-Carlton Tokyo",
+      flightNumber: "UA8011",
+      passengerCount: 2,
+      luggageCount: 2,
+    });
+    expect(result.worksheet?.locationBasis).toBe("flight-and-hotel");
+    expect(result.quote?.suggestedPrice).toBeGreaterThan(0);
+    expect(result.aiMessage.text).toMatch(/flight and hotel|航班和酒店/iu);
+    expect(result.aiMessage.text).not.toMatch(/exact pickup location|drop-off location/iu);
+  });
+
+  it("recovers a hotel address from recent customer messages instead of asking again", async () => {
+    const result = await analyzeCustomerTurn({
+      message: "How much will it be?",
+      currentTripDetails: {
+        flightNumber: "UA8011",
+        passengerCount: 2,
+        luggageCount: 2,
+      },
+      recentMessages: [
+        {
+          id: "customer-address",
+          role: "customer",
+          text: "My hotel address is The Ritz-Carlton Tokyo.",
+          createdAt: "2026-07-22T00:00:00.000Z",
+          channel: "website_widget",
+        },
+      ],
+      configuration: airportTransferConfiguration,
+      existingBossItems: [],
+    });
+
+    expect(result.tripDetails.dropoffLocation).toBe("The Ritz-Carlton Tokyo");
+    expect(result.worksheet?.slots.find((slot) => slot.key === "dropoffLocation")?.filled).toBe(true);
+    expect(result.aiMessage.text).not.toMatch(/drop-off location|hotel address/iu);
+  });
+
   it("keeps Mt. Fuji intact and extracts charter hours and distance", async () => {
     const result = await analyzeCustomerTurn({
       message: "Please quote a private charter from Tokyo to Mt. Fuji, 10 hours and about 350 km, for 4 passengers with 2 suitcases.",

@@ -10,7 +10,6 @@ import type {
   TripFieldKey,
 } from "./types";
 import type { ExistingBossInboxItem, WorkflowResult } from "./workflow-types";
-import { getMissingBookingFields, getMissingQuoteFields } from "./booking-workflow";
 
 // Real AI integration (modular - falls back gracefully if no key)
 import {
@@ -25,6 +24,7 @@ import { resolveConversationLang, type PromptLang } from "../ai/prompts/template
 import { formatFlightArrivalDetails } from "../flight/arrival";
 import { calculateWorkflowQuote } from "./pricing";
 import { extractDateText, extractLabeledTripFields, normalizeTripDetails } from "./trip-state";
+import { buildConversationWorksheet } from "./conversation-worksheet";
 
 const eventKeywords: Array<{
   type: EventType;
@@ -255,6 +255,7 @@ export async function analyzeCustomerTurn(params: {
     };
   }
 
+  const workingTripDetails = recoverRecentCustomerFacts(params.currentTripDetails, params.recentMessages);
   let tripDetails: TripDetails;
   let contact: CapturedContact | undefined;
   let detectedEvents: DetectedEvent[];
@@ -264,14 +265,14 @@ export async function analyzeCustomerTurn(params: {
   if (hasRealAI) {
     // Prefer real LLM with structured outputs (per project architecture rules)
     const [aiTripDetails, aiContact, aiDetectedEvents] = await Promise.all([
-      extractTripDetailsWithAI(promptMessage, params.currentTripDetails, params.configuration),
+      extractTripDetailsWithAI(promptMessage, workingTripDetails, params.configuration),
       deterministicContact ? Promise.resolve(undefined) : extractContactWithAI(params.message),
       detectEventsWithAI(promptMessage, params.configuration),
     ]);
     // Keep critical booking fields deterministic while preserving the model's
     // extracted fields on top of the already persisted trip details.
     tripDetails = mergeTripDetails(
-      params.currentTripDetails,
+      workingTripDetails,
       params.message,
       aiTripDetails,
       { locationPrompted: hasRecentLocationPrompt(params.recentMessages) },
@@ -281,7 +282,7 @@ export async function analyzeCustomerTurn(params: {
   } else {
     // Fallback to original rule-based logic
     tripDetails = mergeTripDetails(
-      params.currentTripDetails,
+      workingTripDetails,
       params.message,
       undefined,
       { locationPrompted: hasRecentLocationPrompt(params.recentMessages) },
@@ -310,13 +311,14 @@ export async function analyzeCustomerTurn(params: {
     }
   }
 
-  const missingFields = getMissingQuoteFields(tripDetails);
-  const missingBookingFields = getMissingBookingFields(tripDetails);
+  const worksheet = buildConversationWorksheet(tripDetails);
+  const missingFields = worksheet.missingForEstimate;
+  const missingBookingFields = worksheet.missingForBooking;
 
   // Pricing is owned by configured business rules, never invented by the
   // model. This also removes an entire sequential LLM round trip.
   const quoteUsesApprovedPrice = Boolean(
-    params.approvedQuote && !hasQuoteRelevantTripChanges(params.currentTripDetails, tripDetails),
+    params.approvedQuote && !hasQuoteRelevantTripChanges(workingTripDetails, tripDetails),
   );
   const quote = quoteUsesApprovedPrice
     ? params.approvedQuote
@@ -383,6 +385,17 @@ export async function analyzeCustomerTurn(params: {
     });
   }
 
+  if (quote && worksheet.locationBasis === "flight-and-hotel") {
+    aiMessage = {
+      ...aiMessage,
+      text: `${aiMessage.text} ${lang === "zh"
+        ? "当前先按航班和酒店信息估算，具体上车点由司机后续确认。"
+        : lang === "ar"
+          ? "هذا تقدير مبني على رقم الرحلة والفندق، ويمكن للسائق تأكيد نقطة الالتقاء الدقيقة لاحقًا."
+          : "This estimate uses the flight and hotel information; the driver can confirm the exact meeting point later."}`,
+    };
+  }
+
   return {
     aiMessage,
     tripDetails,
@@ -391,6 +404,7 @@ export async function analyzeCustomerTurn(params: {
     bossInboxItems,
     quote,
     quoteAutoApproved,
+    worksheet,
   };
 }
 
@@ -742,7 +756,22 @@ export function mergeTripDetails(
   const charterIntent = /\b(?:private\s+charter|charter|day\s+tour|hourly\s+(?:hire|charter)|private\s+driver)\b|[\u5305\u8f66\u5305\u8eca\u6e38\u89c8\u666f\u70b9\u5305\u8f66\u8ba2\u5355\u6309\u5c0f\u65f6\u591a\u4e2a\u666f\u70b9]/iu.test(message);
   if (charterIntent) next.serviceType = "day_tour";
 
-  return normalizeTripDetails({ ...next, ...labeledFields });
+  const normalized = normalizeTripDetails({ ...next, ...labeledFields });
+  const airportTransferContext = normalized.serviceType === "airport_pickup" ||
+    normalized.serviceType === "airport_dropoff" ||
+    Boolean(normalized.flightNumber || normalized.airport);
+
+  // A flight number plus a hotel is enough to prepare an estimate. Keep a
+  // generic airport placeholder so the worksheet does not ask for the same
+  // exact meeting point again; the driver can confirm that point later.
+  if (airportTransferContext && normalized.flightNumber && normalized.dropoffLocation && !normalized.serviceType) {
+    normalized.serviceType = "airport_pickup";
+  }
+  if (normalized.serviceType === "airport_pickup" && normalized.flightNumber && !normalized.pickupLocation) {
+    normalized.pickupLocation = normalized.airport ? `${normalized.airport} Airport` : "Airport";
+  }
+
+  return normalized;
 }
 
 function detectEvents(message: string): DetectedEvent[] {
@@ -1116,6 +1145,18 @@ function hasRecentLocationPrompt(messages?: ConversationMessage[]): boolean {
         latestAiMessage.text,
       ),
   );
+}
+
+function recoverRecentCustomerFacts(
+  current: TripDetails,
+  recentMessages?: ConversationMessage[],
+): TripDetails {
+  return (recentMessages ?? [])
+    .filter((message) => message.role === "customer")
+    .reduce(
+      (tripDetails, message) => mergeTripDetails(tripDetails, message.text, undefined, { locationPrompted: true }),
+      current,
+    );
 }
 
 function extractExplicitDropoffLocation(message: string): string | undefined {

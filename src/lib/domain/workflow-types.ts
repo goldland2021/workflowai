@@ -8,6 +8,7 @@ import type {
   TripDetails,
 } from "./types";
 import type { PromptLang } from "../ai/prompts/templates";
+import type { ConversationWorksheet } from "./conversation-worksheet";
 
 export interface ExistingBossInboxItem {
   status: BossInboxItem["status"];
@@ -38,6 +39,7 @@ export interface WorkflowResult {
   bossInboxItems: BossInboxItem[];
   quote?: QuoteSuggestion;
   quoteAutoApproved?: boolean;
+  worksheet?: ConversationWorksheet;
   conversationId?: string | null;  // assigned by server
   isNewConversation?: boolean;
 }
